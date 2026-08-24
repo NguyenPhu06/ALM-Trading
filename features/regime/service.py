@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 from config.settings import load_yaml
 from database.models import COTReport, InstitutionalPressure
 from database.repositories import CandleRepository
-from features.candles import candle_close_time, closed_candle_prefix, utc_aware
+from features.candles import candle_close_time, candle_value, closed_candle_prefix, utc_aware
 from features.indicators import MTFIndicatorEngine
 from features.liquidity import LiquidityEngine
-from features.mtf import MTFResampler
+from data_sources.resampler import MarketDataResampler
 from features.regime.market_regime import InstitutionalFlowInput, MarketRegimeEngine, MarketRegimeSnapshot
 from features.session import SessionEngine
 from features.structure import MarketStructureEngine
@@ -45,7 +45,7 @@ class MarketRegimeService:
             session_engine=session_engine,
         )
         self.indicator_engine = MTFIndicatorEngine()
-        self.resampler = MTFResampler()
+        self.resampler = MarketDataResampler()
         self.institutional_config = config.get("institutional_mtf", {})
         self.regime_engine = MarketRegimeEngine(
             structure_weights=regime.get("structure_weights"),
@@ -68,16 +68,20 @@ class MarketRegimeService:
             timeframe: [candle for candle in rows if candle_close_time(candle) <= as_of]
             for timeframe, rows in native.items()
         }
-        m15 = candles["M15"]
-        for timeframe in ("H1", "H4", "D1"):
-            if not candles[timeframe] and m15:
-                candles[timeframe] = self.resampler.resample(m15, timeframe, as_of=as_of)
+        for source_timeframe, target_timeframe in (
+            ("M1", "M5"), ("M5", "M15"), ("M15", "H1"),
+            ("H1", "H4"), ("H4", "D1"),
+        ):
+            if not candles[target_timeframe] and candles[source_timeframe]:
+                candles[target_timeframe] = self.resampler.resample(
+                    candles[source_timeframe], source_timeframe, target_timeframe, as_of=as_of,
+                )
 
         structure = {timeframe: self.structure_engine.calculate(rows) for timeframe, rows in candles.items()}
         liquidity = {timeframe: self.liquidity_engine.calculate(rows) for timeframe, rows in candles.items()}
         indicators = self.indicator_engine.calculate_matrix(candles, as_of=as_of)
         current_rows = candles["M15"] or candles["H1"] or candles["H4"] or candles["D1"]
-        current_price = Decimal(str(getattr(current_rows[-1], "close", 0))) if current_rows else Decimal("0")
+        current_price = Decimal(str(candle_value(current_rows[-1], "close", 0))) if current_rows else Decimal("0")
         institutional = self._institutional(symbol, as_of)
         return self.regime_engine.calculate(
             symbol=symbol, as_of=as_of,

@@ -28,11 +28,18 @@ class Settings(BaseSettings):
     tradingview_webhook_secret: str = Field(min_length=24)
     live_trading_enabled: bool = False
     log_level: str = "INFO"
+    market_data_provider: str = "historical"
+    market_data_api_key: str | None = None
+    market_data_base_url: str = "https://api.twelvedata.com"
+    market_data_timeout: float = 30.0
+    market_data_rate_limit: float = 8.0
+    market_data_max_retries: int = 3
+    market_data_backoff_seconds: float = 1.0
 
     @model_validator(mode="after")
     def enforce_phase_safety(self) -> "Settings":
         if self.live_trading_enabled:
-            raise ValueError("LIVE_TRADING_ENABLED must be false during Phase 1A/1B")
+            raise ValueError("LIVE_TRADING_ENABLED must be false during Phase 1A/1B/2")
         return self
 
     @property

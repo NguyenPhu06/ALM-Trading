@@ -11,7 +11,8 @@ from data_quality import MarketDataValidator
 from database.repositories import CandleRepository, LiquidityEventRepository, StructureEventRepository
 from features.liquidity import LiquidityEngine
 from features.candles import candle_close_time, closed_candle_prefix, utc_aware
-from features.mtf import MTFAlignmentEngine, MTFResampler
+from features.mtf import MTFAlignmentEngine
+from data_sources.resampler import MarketDataResampler
 from features.session import SessionEngine
 from features.snapshot import create_feature_snapshot
 from features.structure import MarketStructureEngine
@@ -54,7 +55,7 @@ class Phase1BPipeline:
             session_engine=session_engine,
         )
         self.session_engine = session_engine
-        self.resampler = MTFResampler()
+        self.resampler = MarketDataResampler()
         self.alignment_engine = MTFAlignmentEngine()
         self.last_snapshots: list[dict[str, Any]] = []
         self.last_regime: MarketRegimeSnapshot | None = None
@@ -83,11 +84,21 @@ class Phase1BPipeline:
         events_by_timeframe = {timeframe.upper(): list(structure)}
         resampled_counts: dict[str, int] = {}
         if timeframe.upper() == "M15":
-            for target in ("H1", "H4", "D1"):
-                aggregated = self.resampler.resample(candles, target)
-                resampled_counts[target] = len(aggregated)
-                target_structure = self.structure_engine.calculate(aggregated)
-                target_liquidity = self.liquidity_engine.calculate(aggregated)
+            source_rows: dict[str, list[Any]] = {"M15": list(candles)}
+            as_of = candle_close_time(candles[-1]) if candles else None
+            for source_timeframe, target in (("M15", "H1"), ("H1", "H4"), ("H4", "D1")):
+                native = closed_candle_prefix(CandleRepository(self.session).chronological(
+                    symbol=symbol.upper(), timeframe=target, start=start, end=end,
+                ))
+                if as_of is not None:
+                    native = [candle for candle in native if candle_close_time(candle) <= as_of]
+                target_candles = native or self.resampler.resample(
+                    source_rows[source_timeframe], source_timeframe, target, as_of=as_of,
+                )
+                source_rows[target] = list(target_candles)
+                resampled_counts[target] = 0 if native else len(target_candles)
+                target_structure = self.structure_engine.calculate(target_candles)
+                target_liquidity = self.liquidity_engine.calculate(target_candles)
                 events_by_timeframe[target] = target_structure
                 all_structure.extend(target_structure)
                 all_liquidity.extend(target_liquidity)

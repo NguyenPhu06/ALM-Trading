@@ -3,6 +3,7 @@ from features.structure.market_structure import (
     MarketStructureEngine,
     StructureBias,
     StructureEventData,
+    TrendState,
 )
 from features.structure.swing_detector import SwingDetector, SwingPoint, SwingType
 
@@ -14,4 +15,5 @@ __all__ = [
     "SwingDetector",
     "SwingPoint",
     "SwingType",
+    "TrendState",
 ]

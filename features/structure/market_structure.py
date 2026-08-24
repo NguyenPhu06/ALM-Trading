@@ -27,6 +27,13 @@ class StructureBias(StrEnum):
     STRONG_BEARISH = "STRONG_BEARISH"
 
 
+class TrendState(StrEnum):
+    BULLISH = "BULLISH"
+    BEARISH = "BEARISH"
+    RANGING = "RANGING"
+    UNKNOWN = "UNKNOWN"
+
+
 @dataclass(frozen=True, slots=True)
 class StructureEventData:
     event_timestamp: datetime
@@ -38,6 +45,7 @@ class StructureEventData:
     confirmation_timestamp: datetime | None = None
     strength: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    calculation_version: str = "phase3.v1"
 
     @property
     def confirmation_status(self) -> str:
@@ -53,8 +61,14 @@ class MarketStructureEngine:
         break_mode: BreakMode | str = BreakMode.CLOSE_BREAK,
         equal_level_tolerance_points: float = 3.0,
         point_size: Decimal | float | str = Decimal("0.00001"),
+        minimum_swing_distance: int = 1,
+        minimum_swing_price_move: Decimal | float | str = Decimal("0"),
     ):
-        self.swing_detector = SwingDetector(swing_left_bars, swing_right_bars)
+        self.swing_detector = SwingDetector(
+            swing_left_bars, swing_right_bars,
+            minimum_distance=minimum_swing_distance,
+            minimum_price_move=minimum_swing_price_move,
+        )
         self.break_mode = BreakMode(break_mode)
         self.equal_tolerance = Decimal(str(equal_level_tolerance_points)) * Decimal(str(point_size))
 
@@ -222,3 +236,15 @@ class MarketStructureEngine:
         else:
             bias = StructureBias.NEUTRAL
         return bias, round(score, 2)
+
+    @classmethod
+    def trend_state(cls, events: Sequence[StructureEventData]) -> TrendState:
+        confirmed = [event for event in events if event.event_type in {"HH", "HL", "LH", "LL"}]
+        kinds = {event.event_type for event in confirmed[-4:]}
+        if {"HH", "HL"} <= kinds:
+            return TrendState.BULLISH
+        if {"LH", "LL"} <= kinds:
+            return TrendState.BEARISH
+        if len(confirmed) >= 2:
+            return TrendState.RANGING
+        return TrendState.UNKNOWN

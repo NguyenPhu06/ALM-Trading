@@ -57,3 +57,46 @@ market_regime:
 institutional_mtf:
   cot_market_mapping:
     EURUSD: EURO FX
+
+market_data:
+  symbols: [EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, USDCAD, NZDUSD]
+  timeframes: [D1, H4, H1, M15, M5, M1]
+  sample_sources: [local_csv]
+  freshness_threshold_seconds:
+    M1: 180
+    M5: 900
+    M15: 2700
+    H1: 10800
+    H4: 43200
+    D1: 259200
+  readiness_recent_candles: 5000
+
+phase_3:
+  calculation_version: phase3.v1
+  timeframe_weights:
+    D1: 0.35
+    H4: 0.25
+    H1: 0.20
+    M15: 0.10
+    M5: 0.06
+    M1: 0.04
+  swing_left_bars: 2
+  swing_right_bars: 2
+  minimum_swing_distance: 1
+  minimum_swing_price_move: 0
+  break_mode: CLOSE_BREAK
+  equal_level_tolerance_points: 3
+  point_size: 0.00001
+  minimum_rejection_ratio: 0.15
+  minimum_fvg_size: 0
+  order_block_lookback: 5
+  displacement_atr_ratio: 1.5
+  displacement_body_ratio: 0.60
+  rsi_period: 14
+  adx_period: 14
+  atr_period: 14
+  tenkan_period: 9
+  kijun_period: 26
+  senkou_b_period: 52
+  volatility_period: 20
+  abnormal_spread_ratio: 0.001

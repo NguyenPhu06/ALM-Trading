@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, Date, DateTime, Float, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, true
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.base import Base
@@ -17,7 +17,7 @@ def utcnow() -> datetime:
 class MarketCandle(Base):
     __tablename__ = "market_candles"
     __table_args__ = (
-        UniqueConstraint("symbol", "timeframe", "timestamp", name="uq_market_candle"),
+        UniqueConstraint("symbol", "timeframe", "timestamp", "source", name="uq_market_candle_source"),
         Index("ix_market_candles_symbol_timeframe_timestamp", "symbol", "timeframe", "timestamp"),
     )
 
@@ -30,9 +30,41 @@ class MarketCandle(Base):
     low: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
     close: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
     volume: Mapped[Decimal | None] = mapped_column(Numeric(24, 8))
+    tick_volume: Mapped[Decimal | None] = mapped_column(Numeric(24, 8))
+    spread: Mapped[Decimal | None] = mapped_column(Numeric(24, 10))
     is_closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
     source: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown", server_default="unknown")
+    provider_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ingestion_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    source_timeframe: Mapped[str | None] = mapped_column(String(8))
+    target_timeframe: Mapped[str | None] = mapped_column(String(8))
+    resampling_method: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class MarketDataIngestion(Base):
+    __tablename__ = "market_data_ingestions"
+    __table_args__ = (
+        Index("ix_market_data_ingestions_provider_end", "provider", "request_end"),
+        Index("ix_market_data_ingestions_symbol_tf_end", "symbol", "timeframe", "request_end"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(8), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    request_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    request_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    rows_received: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rows_inserted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rows_updated: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rows_skipped: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    invalid_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    gaps: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    duration_seconds: Mapped[float | None] = mapped_column(Float)
+    last_error: Mapped[str | None] = mapped_column(Text)
 
 
 class MarketTick(Base):
@@ -132,6 +164,26 @@ class IndicatorSnapshot(Base):
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
 
+class MarketIntelligenceSnapshot(Base):
+    __tablename__ = "market_intelligence_snapshots"
+    __table_args__ = (
+        UniqueConstraint("symbol", "timeframe", "event_timestamp", "calculation_version", name="uq_market_intelligence_snapshot"),
+        Index("ix_intelligence_symbol_tf_timestamp", "symbol", "timeframe", "event_timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(8), nullable=False, default="MTF")
+    market_candle_id: Mapped[int | None] = mapped_column(ForeignKey("market_candles.id", ondelete="SET NULL"))
+    calculation_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    bias: Mapped[str] = mapped_column(String(32), nullable=False)
+    trade_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    feature_vector_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 class COTReport(Base):
     __tablename__ = "cot_reports"
     __table_args__ = (
@@ -203,7 +255,7 @@ class TradingOutcome(Base):
 
 
 __all__ = [
-    "MarketCandle", "MarketTick", "TradingViewAlert", "LiquidityEvent",
-    "StructureEvent", "IndicatorSnapshot", "COTReport", "InstitutionalPressure",
+    "MarketCandle", "MarketDataIngestion", "MarketTick", "TradingViewAlert", "LiquidityEvent",
+    "StructureEvent", "IndicatorSnapshot", "MarketIntelligenceSnapshot", "COTReport", "InstitutionalPressure",
     "StrategySignal", "TradingOutcome",
 ]

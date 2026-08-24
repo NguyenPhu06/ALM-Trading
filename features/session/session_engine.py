@@ -36,6 +36,20 @@ class SessionLevel:
     is_current: bool
 
 
+@dataclass(frozen=True, slots=True)
+class SessionStatistics:
+    event_timestamp: datetime
+    session: SessionName
+    high: float
+    low: float
+    range: float
+    volatility: float
+    candle_count: int
+    calculation_version: str = "phase3.v1"
+    symbol: str | None = None
+    timeframe: str | None = None
+
+
 class SessionEngine:
     """Assign sessions and derive causal running/previous-session levels."""
 
@@ -123,3 +137,26 @@ class SessionEngine:
                 levels.append(SessionLevel(candle_close_time(candle), previous[0], previous[1], previous[2], False))
             levels.append(SessionLevel(candle_close_time(candle), session, running_high, running_low, True))
         return levels
+
+    def statistics(self, candles: Sequence[Any]) -> list[SessionStatistics]:
+        """Causal running session statistics at every closed candle."""
+        output: list[SessionStatistics] = []
+        groups: dict[tuple[Any, SessionName], list[Any]] = {}
+        for candle in candles:
+            timestamp = candle["timestamp"] if isinstance(candle, dict) else candle.timestamp
+            session = self.session_for(timestamp)
+            if session is SessionName.OFF_SESSION:
+                continue
+            key = (self._aware(timestamp).astimezone(self.timezone).date(), session)
+            rows = groups.setdefault(key, [])
+            rows.append(candle)
+            value = lambda row, name: row[name] if isinstance(row, dict) else getattr(row, name)
+            high = max(float(value(row, "high")) for row in rows)
+            low = min(float(value(row, "low")) for row in rows)
+            ranges = [float(value(row, "high")) - float(value(row, "low")) for row in rows]
+            output.append(SessionStatistics(
+                candle_close_time(candle), session, high, low, high - low,
+                sum(ranges) / len(ranges), len(rows),
+                symbol=str(value(candle, "symbol")), timeframe=str(value(candle, "timeframe")),
+            ))
+        return output

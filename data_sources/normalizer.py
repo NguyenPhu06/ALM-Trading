@@ -85,8 +85,15 @@ class CandleNormalizer:
             "low": normalize_decimal(raw.get("low"), "low"),
             "close": normalize_decimal(raw.get("close"), "close"),
             "volume": normalize_decimal(raw.get("volume"), "volume", optional=True),
+            "tick_volume": normalize_decimal(raw.get("tick_volume"), "tick_volume", optional=True),
+            "spread": normalize_decimal(raw.get("spread"), "spread", optional=True),
             "is_closed": normalize_closed_state(raw.get("is_closed")),
             "source": source,
+            "provider": str(raw.get("provider") or source),
+            "provider_timestamp": normalize_timestamp(raw["provider_timestamp"]) if raw.get("provider_timestamp") else None,
+            "source_timeframe": normalize_timeframe(raw["source_timeframe"]) if raw.get("source_timeframe") else None,
+            "target_timeframe": normalize_timeframe(raw["target_timeframe"]) if raw.get("target_timeframe") else None,
+            "resampling_method": str(raw["resampling_method"]) if raw.get("resampling_method") else None,
         }
         self.validator.validate_candle(candle)
         return candle

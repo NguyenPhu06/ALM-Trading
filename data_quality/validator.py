@@ -43,6 +43,8 @@ class MarketDataValidator:
             errors.append("is_closed must be boolean")
         try:
             open_, high, low, close = (Decimal(str(candle[name])) for name in ("open", "high", "low", "close"))
+            if any(value <= 0 for value in (open_, high, low, close)):
+                errors.append("OHLC prices must be positive")
             if high < open_:
                 errors.append("high must be >= open")
             if high < close:
@@ -55,6 +57,10 @@ class MarketDataValidator:
                 errors.append("high must be >= low")
             if candle.get("volume") is not None and Decimal(str(candle["volume"])) < 0:
                 errors.append("volume cannot be negative")
+            if candle.get("tick_volume") is not None and Decimal(str(candle["tick_volume"])) < 0:
+                errors.append("tick_volume cannot be negative")
+            if candle.get("spread") is not None and Decimal(str(candle["spread"])) < 0:
+                errors.append("spread cannot be negative")
         except (KeyError, ValueError, TypeError, ArithmeticError):
             errors.append("OHLC/volume values must be numeric")
         if errors:

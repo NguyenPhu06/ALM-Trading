@@ -27,6 +27,7 @@ class LiquidityLevel:
     swing_strength: float = 0.0
     equal_level: bool = False
     session_relevance: float = 0.0
+    calculation_version: str = "phase3.v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +41,7 @@ class LiquidityEventData:
     confirmation_timestamp: datetime | None = None
     strength: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    calculation_version: str = "phase3.v1"
 
 
 class LiquidityEngine:
@@ -53,11 +55,13 @@ class LiquidityEngine:
         equal_level_tolerance_points: float = 3.0,
         point_size: Decimal | float | str = Decimal("0.00001"),
         minimum_rejection_ratio: float = 0.15,
+        minimum_pool_touches: int = 2,
         session_engine: SessionEngine | None = None,
     ):
         self.swing_detector = SwingDetector(swing_left_bars, swing_right_bars)
         self.tolerance = Decimal(str(equal_level_tolerance_points)) * Decimal(str(point_size))
         self.minimum_rejection_ratio = minimum_rejection_ratio
+        self.minimum_pool_touches = max(2, minimum_pool_touches)
         self.session_engine = session_engine or SessionEngine()
 
     @staticmethod
@@ -141,6 +145,16 @@ class LiquidityEngine:
             ))
             previous_by_side[side] = swing
 
+        for side in ("HIGH", "LOW"):
+            side_swings = [swing for swing in swings if (swing.swing_type is SwingType.HIGH) == (side == "HIGH")]
+            cluster: list[Any] = []
+            for swing in side_swings:
+                if cluster and abs(swing.price - cluster[-1].price) > self.tolerance:
+                    self._append_pool(levels, cluster, side, close_by_time)
+                    cluster = []
+                cluster.append(swing)
+            self._append_pool(levels, cluster, side, close_by_time)
+
         symbol = str(self._value(candles[0], "symbol"))
         timeframe = str(self._value(candles[0], "timeframe"))
         previous_date = None
@@ -165,33 +179,32 @@ class LiquidityEngine:
                 day_low = low if day_low is None else min(day_low, low)
             previous_date = date
 
-        if timeframe == "D1":
-            for period_name, key_function, reference_timeframe, relevance in (
-                ("WEEK", lambda value: value.isocalendar()[:2], "W1", 25),
-                ("MONTH", lambda value: (value.year, value.month), "MN1", 30),
-            ):
-                previous_key = None
-                period_high = period_low = None
-                for candle in candles:
-                    open_timestamp = self._value(candle, "timestamp")
-                    period_key = key_function(open_timestamp.date())
-                    high = Decimal(str(self._value(candle, "high")))
-                    low = Decimal(str(self._value(candle, "low")))
-                    close = Decimal(str(self._value(candle, "close")))
-                    if previous_key is not None and period_key != previous_key:
-                        assert period_high is not None and period_low is not None
-                        for suffix, side, price in (("HIGH", "HIGH", period_high), ("LOW", "LOW", period_low)):
-                            levels.append(LiquidityLevel(
-                                candle_close_time(candle), symbol, timeframe,
-                                f"PREVIOUS_{period_name}_{suffix}", side, price,
-                                self.strength_score(abs(close - price), close, 1, 0, reference_timeframe, False, 0, relevance),
-                                session_relevance=relevance,
-                            ))
-                        period_high, period_low = high, low
-                    else:
-                        period_high = high if period_high is None else max(period_high, high)
-                        period_low = low if period_low is None else min(period_low, low)
-                    previous_key = period_key
+        for period_name, key_function, reference_timeframe, relevance in (
+            ("WEEK", lambda value: value.isocalendar()[:2], "W1", 25),
+            ("MONTH", lambda value: (value.year, value.month), "MN1", 30),
+        ):
+            previous_key = None
+            period_high = period_low = None
+            for candle in candles:
+                open_timestamp = self._value(candle, "timestamp")
+                period_key = key_function(open_timestamp.date())
+                high = Decimal(str(self._value(candle, "high")))
+                low = Decimal(str(self._value(candle, "low")))
+                close = Decimal(str(self._value(candle, "close")))
+                if previous_key is not None and period_key != previous_key:
+                    assert period_high is not None and period_low is not None
+                    for suffix, side, price in (("HIGH", "HIGH", period_high), ("LOW", "LOW", period_low)):
+                        levels.append(LiquidityLevel(
+                            candle_close_time(candle), symbol, timeframe,
+                            f"PREVIOUS_{period_name}_{suffix}", side, price,
+                            self.strength_score(abs(close - price), close, 1, 0, reference_timeframe, False, 0, relevance),
+                            session_relevance=relevance,
+                        ))
+                    period_high, period_low = high, low
+                else:
+                    period_high = high if period_high is None else max(period_high, high)
+                    period_low = low if period_low is None else min(period_low, low)
+                previous_key = period_key
 
         session_levels = self.session_engine.levels(candles)
         last_by_key: dict[tuple[str, SessionName, str], Decimal] = {}
@@ -211,6 +224,24 @@ class LiquidityEngine:
                 last_by_key[key] = price
         return sorted(levels, key=lambda item: item.event_timestamp)
 
+    def _append_pool(
+        self, levels: list[LiquidityLevel], cluster: list[Any], side: str,
+        close_by_time: dict[datetime, Decimal],
+    ) -> None:
+        if len(cluster) < self.minimum_pool_touches:
+            return
+        latest = cluster[-1]
+        price = sum((item.price for item in cluster), Decimal("0")) / len(cluster)
+        close = close_by_time[latest.confirmation_timestamp]
+        levels.append(LiquidityLevel(
+            latest.confirmation_timestamp, latest.symbol, latest.timeframe,
+            "BUY_SIDE_LIQUIDITY_POOL" if side == "HIGH" else "SELL_SIDE_LIQUIDITY_POOL",
+            side, price,
+            self.strength_score(abs(close - price), close, len(cluster), 0, latest.timeframe, True,
+                                max(item.strength for item in cluster), 0),
+            len(cluster), max(item.strength for item in cluster), True, 0,
+        ))
+
     def _sweep(
         self, level: LiquidityLevel, timestamp: datetime, close: Decimal,
         direction: str, penetration: Decimal, rejection: Decimal, rejection_ratio: float,
@@ -224,6 +255,7 @@ class LiquidityEngine:
             timestamp, level.symbol, level.timeframe, "LIQUIDITY_SWEEP", direction, close,
             timestamp, strength,
             {"sweep_type": f"{direction}_LIQUIDITY_SWEEP", "level_type": level.level_type,
+             "liquidity_side": "BUY_SIDE" if level.side == "HIGH" else "SELL_SIDE",
              "liquidity_level": str(level.price), "penetration": str(penetration),
              "rejection": str(rejection), "rejection_ratio": round(rejection_ratio, 4),
              "close_back_inside": True, "level_known_at": level.event_timestamp.isoformat(),

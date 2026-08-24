@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from api.schemas import TradingViewWebhook
 from config.settings import get_settings, load_yaml
 from data_quality import DataValidationError
+from data_sources.health import MarketDataHealthService
 from database.repositories import (
     CandleRepository,
     COTRepository,
@@ -21,6 +22,7 @@ from database.repositories import (
 )
 from features.structure import MarketStructureEngine, StructureEventData
 from features.regime.service import MarketRegimeService
+from features.intelligence import MarketIntelligenceEngine, MarketIntelligenceService
 from dataclasses import asdict
 from database.session import check_connection, get_db
 from logging_config import configure_logging
@@ -28,7 +30,7 @@ from logging_config import configure_logging
 
 configure_logging()
 logger = logging.getLogger(__name__)
-app = FastAPI(title="ALM-Trading Market Data API", version="1A")
+app = FastAPI(title="ALM-Trading Market Intelligence API", version="3.0")
 
 
 def pagination(limit: int, offset: int) -> tuple[int, int]:
@@ -47,7 +49,7 @@ def as_dict(model: Any) -> dict[str, Any]:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "phase": "1B"}
+    return {"status": "ok", "phase": "3"}
 
 
 @app.get("/api/system/status")
@@ -125,6 +127,66 @@ def list_candles(
     return {"offset": offset, "limit": limit, "items": [as_dict(row) for row in rows]}
 
 
+@app.get("/api/market-data/candles")
+def market_data_candles(
+    symbol: str | None = None,
+    timeframe: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    source: str | None = None,
+    closed_only: bool = True,
+    limit: int = Query(100, ge=1),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    limit, offset = pagination(limit, offset)
+    rows = CandleRepository(db).list(
+        symbol=symbol.upper() if symbol else None,
+        timeframe=timeframe.upper() if timeframe else None,
+        start=start, end=end, source=source, closed_only=closed_only,
+        offset=offset, limit=limit,
+    )
+    return {"offset": offset, "limit": limit, "items": [as_dict(row) for row in rows]}
+
+
+@app.get("/api/market-data/latest")
+def market_data_latest(
+    symbol: str = "EURUSD", timeframe: str = "M15", source: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    row = CandleRepository(db).latest(symbol.upper(), timeframe.upper(), source=source)
+    if row is None:
+        raise HTTPException(status_code=404, detail="No market data found")
+    return as_dict(row)
+
+
+@app.get("/api/market-data/health")
+def market_data_health(
+    symbol: str = "EURUSD", timeframe: str = "M15",
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return MarketDataHealthService(db).health(symbol, timeframe)
+
+
+@app.get("/api/market-data/gaps")
+def market_data_gaps(
+    symbol: str = "EURUSD", timeframe: str = "M15",
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    report = MarketDataHealthService(db).health(symbol, timeframe)
+    return {"symbol": report["symbol"], "timeframe": report["timeframe"], "items": report["gap_details"]}
+
+
+@app.get("/api/market-data/providers")
+def market_data_providers(db: Session = Depends(get_db)) -> dict[str, Any]:
+    return {"items": MarketDataHealthService(db).providers()}
+
+
+@app.get("/api/market-data/readiness")
+def market_data_readiness(db: Session = Depends(get_db)) -> dict[str, Any]:
+    return MarketDataHealthService(db).readiness()
+
+
 @app.get("/api/structure")
 def list_structure(
     symbol: str | None = None,
@@ -195,6 +257,66 @@ def market_regime(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     return asdict(MarketRegimeService(db).calculate(symbol, as_of=as_of))
+
+
+@app.get("/api/intelligence/{symbol}")
+def market_intelligence(
+    symbol: str, as_of: datetime | None = None, db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    service = MarketIntelligenceService(db)
+    return service._jsonable(service.calculate(symbol, as_of=as_of))
+
+
+@app.get("/api/intelligence/{symbol}/mtf")
+def market_intelligence_mtf(
+    symbol: str, as_of: datetime | None = None, db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    service = MarketIntelligenceService(db)
+    return service._jsonable(service.calculate(symbol, as_of=as_of))
+
+
+@app.get("/api/intelligence/{symbol}/{timeframe}")
+def market_intelligence_timeframe(
+    symbol: str, timeframe: str, as_of: datetime | None = None,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    timeframe = timeframe.upper()
+    if timeframe not in MarketIntelligenceEngine.TIMEFRAMES:
+        raise HTTPException(status_code=422, detail="Unsupported intelligence timeframe")
+    service = MarketIntelligenceService(db)
+    return service._jsonable(service.calculate(symbol, as_of=as_of).timeframes[timeframe])
+
+
+@app.get("/api/liquidity/{symbol}")
+def current_liquidity(
+    symbol: str, as_of: datetime | None = None, db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    service = MarketIntelligenceService(db)
+    snapshot = service.calculate(symbol, as_of=as_of)
+    return {timeframe: {"liquidity": state.liquidity, "sweep": service._jsonable(state.sweep)} for timeframe, state in snapshot.timeframes.items()}
+
+
+@app.get("/api/structure/{symbol}")
+def current_structure(
+    symbol: str, as_of: datetime | None = None, db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    snapshot = MarketIntelligenceService(db).calculate(symbol, as_of=as_of)
+    return {
+        timeframe: {"trend": state.trend, "structure": state.structure, "bos": state.bos, "choch": state.choch,
+                    "swing_high": state.swing_high, "swing_low": state.swing_low}
+        for timeframe, state in snapshot.timeframes.items()
+    }
+
+
+@app.get("/api/indicators/{symbol}/{timeframe}")
+def current_indicators(
+    symbol: str, timeframe: str, as_of: datetime | None = None,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    timeframe = timeframe.upper()
+    if timeframe not in MarketIntelligenceEngine.TIMEFRAMES:
+        raise HTTPException(status_code=422, detail="Unsupported indicator timeframe")
+    return MarketIntelligenceService(db).calculate(symbol, as_of=as_of).timeframes[timeframe].indicators
 
 
 @app.get("/api/cot")
