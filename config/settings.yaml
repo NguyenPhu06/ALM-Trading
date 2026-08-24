@@ -1,0 +1,59 @@
+database:
+  pool_pre_ping: true
+
+market:
+  default_symbol: EURUSD
+  default_timeframe: M15
+  sample_file: data/sample/EURUSD_M15_sample.csv
+
+tradingview:
+  webhook_enabled: true
+  secret_header: X-TradingView-Secret
+  allow_payload_secret: true
+
+cot:
+  enabled: true
+  # Official CFTC Public Reporting Environment, TFF Futures Only dataset.
+  url: https://www.cftc.gov/dea/newcot/FinFutWk.txt
+  limit: 5000
+  timeout_seconds: 30
+
+risk:
+  live_trading_enabled: false
+
+paper_trading:
+  enabled: true
+
+pagination:
+  default_limit: 100
+  max_limit: 1000
+
+phase_1b:
+  supported_timeframes: [M1, M5, M15, M30, H1, H4, D1]
+  swing_left_bars: 2
+  swing_right_bars: 2
+  break_mode: CLOSE_BREAK
+  equal_level_tolerance_points: 3
+  point_size: 0.00001
+  minimum_rejection_ratio: 0.15
+
+sessions:
+  timezone: UTC
+  asia: ["00:00", "09:00"]
+  london: ["07:00", "16:00"]
+  new_york: ["13:00", "22:00"]
+
+market_regime:
+  structure_weights:
+    D1: 0.40
+    H4: 0.30
+    H1: 0.20
+    M15: 0.10
+  ltf_weights:
+    M15: 0.60
+    M5: 0.25
+    M1: 0.15
+
+institutional_mtf:
+  cot_market_mapping:
+    EURUSD: EURO FX
