@@ -1,19 +1,19 @@
-# SMC and price-action features
+# Feature SMC và price action
 
-These definitions are deterministic hypotheses. They do not claim knowledge of market-maker intent or actual institutional order flow.
+Các định nghĩa này là giả thuyết xác định. Chúng không tuyên bố biết ý định market maker hay dòng lệnh thực của tổ chức.
 
-## Fair value gap and imbalance
+## Fair value gap và imbalance
 
-For three consecutive closed candles `(i-2, i-1, i)`, a bullish FVG exists when `low[i] > high[i-2]`; its zone is `[high[i-2], low[i]]`. A bearish FVG exists when `high[i] < low[i-2]`; its zone is `[high[i], low[i-2]]`. Size must meet the configured minimum. Subsequent candles update fill percentage from 0 to 100 and state `OPEN`, `PARTIALLY_FILLED`, or `FILLED`. A snapshot before a filling candle remains unchanged.
+Với ba candle đã đóng liên tiếp `(i-2, i-1, i)`, bullish FVG tồn tại khi `low[i] > high[i-2]`; vùng là `[high[i-2], low[i]]`. Bearish FVG tồn tại khi `high[i] < low[i-2]`; vùng là `[high[i], low[i-2]]`. Kích thước phải đạt mức tối thiểu đã cấu hình. Candle về sau cập nhật tỷ lệ fill từ 0 đến 100 và trạng thái `OPEN`, `PARTIALLY_FILLED` hoặc `FILLED`. Snapshot trước candle fill vẫn không đổi.
 
-## Displacement and rejection
+## Displacement và rejection
 
-True range is compared with rolling ATR. A candle is displaced when `range / ATR` exceeds the configured ratio and `abs(close-open) / range` exceeds the body threshold. Direction is the body direction; volume ratio is included only when real volume exists.
+True range được so sánh với rolling ATR. Candle được coi là displacement khi `range / ATR` vượt tỷ lệ cấu hình và `abs(close-open) / range` vượt body threshold. Hướng là hướng thân candle; volume ratio chỉ được đưa vào khi có volume thật.
 
-Rejection is the larger wick divided by total range. It is flagged only above the configured wick threshold.
+Rejection là wick lớn hơn chia cho tổng range. Chỉ gắn cờ khi vượt wick threshold đã cấu hình.
 
-## Order and breaker blocks
+## Order block và breaker block
 
-The initial order-block rule selects the last opposite candle within a configured lookback before a qualifying displacement candle closes beyond the rolling high or low. Its full high-low range is the zone. A later overlap marks mitigation. If price later closes completely through the opposite zone boundary, it is labeled `BREAKER_BLOCK`.
+Quy tắc order block ban đầu chọn candle ngược hướng gần nhất trong lookback đã cấu hình, đứng trước một displacement candle đủ điều kiện đóng vượt rolling high hoặc low. Toàn bộ range high-low của candle là zone. Việc overlap về sau đánh dấu mitigation. Nếu giá sau đó đóng hoàn toàn xuyên qua biên zone đối diện, nó được gắn `BREAKER_BLOCK`.
 
-These zones never create orders automatically.
+Các zone này không bao giờ tự động tạo lệnh.

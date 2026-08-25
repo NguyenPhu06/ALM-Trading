@@ -1,10 +1,10 @@
-# Indicator engine
+# Indicator Engine
 
-Indicators are calculated independently per timeframe over its closed causal prefix.
+Indicator được tính độc lập cho từng timeframe trên tiền tố nhân quả gồm các candle đã đóng.
 
-- RSI(14): arithmetic mean of the last 14 gains and losses, `100 - 100/(1 + average_gain/average_loss)`. Features include thresholds, midline side, one-step slope, oversold recovery, deterministic close/RSI divergence, and possible exhaustion.
-- ATR(14): arithmetic mean of the last 14 true ranges, where `TR = max(high-low, |high-prev_close|, |low-prev_close|)`.
-- ADX(14): rolling positive/negative directional movement divided by true-range sum, followed by the mean of the last 14 DX values. It exposes `+DI`, `-DI`, direction, rising/falling, and `NO_TREND`, `WEAK_TREND`, `MODERATE_TREND`, or `STRONG_TREND`.
-- Volatility: ATR percentage, population standard deviation of close returns, and the latest range percentile. Percentile bands map to low, normal, high, or extreme volatility.
+- RSI(14): trung bình số học của 14 mức tăng và giảm gần nhất, `100 - 100/(1 + average_gain/average_loss)`. Feature gồm threshold, phía so với midline, slope một bước, phục hồi khỏi oversold, phân kỳ close/RSI xác định và dấu hiệu kiệt sức khả dĩ.
+- ATR(14): trung bình số học của 14 true range gần nhất, với `TR = max(high-low, |high-prev_close|, |low-prev_close|)`.
+- ADX(14): directional movement dương/âm rolling chia cho tổng true range, sau đó lấy trung bình 14 giá trị DX gần nhất. Đầu ra gồm `+DI`, `-DI`, hướng, tăng/giảm và `NO_TREND`, `WEAK_TREND`, `MODERATE_TREND` hoặc `STRONG_TREND`.
+- Volatility: ATR percentage, độ lệch chuẩn tổng thể của close return và percentile range mới nhất. Các dải percentile được ánh xạ thành biến động thấp, bình thường, cao hoặc cực đoan.
 
-Ichimoku defaults are Tenkan 9, Kijun 26, Senkou B 52, displacement 26. Tenkan/Kijun and newly calculated leading spans use data available now. Cloud comparisons at the current candle use spans calculated 26 bars earlier; future-shifted plot coordinates are never read as current information. Chikou exposes the current known close together with its calculation timestamp, rather than reading a future close at the backward plot position.
+Thông số Ichimoku mặc định là Tenkan 9, Kijun 26, Senkou B 52 và displacement 26. Tenkan/Kijun cùng leading span vừa tính chỉ dùng dữ liệu hiện có. So sánh cloud tại candle hiện tại dùng span đã tính 26 bar trước; tọa độ plot dịch về tương lai không bao giờ được đọc như thông tin hiện tại. Chikou công bố giá close hiện đã biết cùng timestamp tính toán, không đọc close tương lai tại vị trí plot lùi về sau.

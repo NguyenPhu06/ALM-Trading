@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from api.schemas import TradingViewWebhook
 from config.settings import get_settings, load_yaml
@@ -18,6 +19,7 @@ from database.repositories import (
     COTRepository,
     LiquidityEventRepository,
     StructureEventRepository,
+    StrategyRepository,
     TradingViewAlertRepository,
 )
 from features.structure import MarketStructureEngine, StructureEventData
@@ -25,12 +27,19 @@ from features.regime.service import MarketRegimeService
 from features.intelligence import MarketIntelligenceEngine, MarketIntelligenceService
 from dataclasses import asdict
 from database.session import check_connection, get_db
+from database.models import EconomicCalendarEventRecord
+from data_sources.gateway import DatabaseMarketDataProvider
+from data_sources.snapshot import RealMarketSnapshotEngine
+from data_sources.validators import MarketQualityValidator
+from data_sources.providers.context import EconomicCalendarProvider, InstitutionalPositionProvider
+from data_sources.providers.gateway import TradingViewAdapter
+from data_sources.providers.factory import create_provider
 from logging_config import configure_logging
 
 
 configure_logging()
 logger = logging.getLogger(__name__)
-app = FastAPI(title="ALM-Trading Market Intelligence API", version="3.0")
+app = FastAPI(title="ALM-Trading Strategy Intelligence API", version="6.0")
 
 
 def pagination(limit: int, offset: int) -> tuple[int, int]:
@@ -49,7 +58,96 @@ def as_dict(model: Any) -> dict[str, Any]:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "phase": "3"}
+    return {"status": "ok", "phase": "7"}
+
+
+@app.get("/market/latest/{symbol}")
+def gateway_latest(symbol: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    quote = DatabaseMarketDataProvider(db).get_latest_quote(symbol.upper())
+    if quote is None: raise HTTPException(status_code=404, detail="No real market quote found")
+    return quote
+
+
+@app.get("/market/candles/{symbol}/{timeframe}")
+def gateway_candles(symbol: str, timeframe: str, limit: int=Query(100,ge=1,le=1000), db: Session=Depends(get_db)) -> dict[str,Any]:
+    rows=DatabaseMarketDataProvider(db).get_candles(symbol.upper(),timeframe.upper(),limit=limit)
+    return {"symbol":symbol.upper(),"timeframe":timeframe.upper(),"candle_policy":"CLOSED_CANDLE_ONLY","items":rows}
+
+
+@app.get("/market/providers/status")
+def gateway_provider_status(db:Session=Depends(get_db))->dict[str,Any]:
+    database=DatabaseMarketDataProvider(db).health_check(); tradingview=TradingViewAdapter().health_check(); configured=create_provider().health_check()
+    def item(value):
+        data=asdict(value);data["status"]="ONLINE" if data["status"]=="HEALTHY" else "OFFLINE" if data["status"] in {"ERROR","UNCONFIGURED"} else data["status"];return data
+    return {"items":[item(database),item(configured),item(tradingview)]}
+
+
+@app.get("/market/data-quality/{symbol}")
+def gateway_quality(symbol:str,timeframe:str="M15",db:Session=Depends(get_db))->dict[str,Any]:
+    provider=DatabaseMarketDataProvider(db);rows=provider.get_candles(symbol.upper(),timeframe.upper(),limit=500)
+    return asdict(MarketQualityValidator().evaluate(rows,symbol=symbol.upper(),timeframe=timeframe.upper(),source=provider.name))
+
+
+@app.get("/market/snapshot/{symbol}")
+def gateway_snapshot(symbol:str,db:Session=Depends(get_db))->dict[str,Any]:
+    return asdict(RealMarketSnapshotEngine(DatabaseMarketDataProvider(db)).build(symbol.upper()))
+
+
+@app.get("/market/cot/{asset}")
+def gateway_cot(asset:str,db:Session=Depends(get_db))->dict[str,Any]:
+    rows=COTRepository(db).list(market=asset,limit=100,offset=0)
+    return {"asset":asset,"realtime":False,"latency_notice":"CFTC COT is delayed weekly public positioning data","items":[as_dict(row) for row in rows]}
+
+
+@app.get("/market/calendar")
+def gateway_calendar(start:datetime|None=None,end:datetime|None=None,db:Session=Depends(get_db))->dict[str,Any]:
+    query=select(EconomicCalendarEventRecord)
+    if start:query=query.where(EconomicCalendarEventRecord.scheduled_time>=start)
+    if end:query=query.where(EconomicCalendarEventRecord.scheduled_time<=end)
+    rows=list(db.scalars(query.order_by(EconomicCalendarEventRecord.scheduled_time).limit(500)))
+    return {"provider_status":"AVAILABLE" if rows else "UNAVAILABLE","items":[as_dict(row) for row in rows]}
+
+
+@app.get("/intelligence/snapshot/{symbol}")
+def gateway_intelligence_snapshot(symbol:str,db:Session=Depends(get_db))->dict[str,Any]:
+    market=RealMarketSnapshotEngine(DatabaseMarketDataProvider(db)).build(symbol.upper())
+    intelligence=None
+    if market.strategy_allowed:
+        try:intelligence=MarketIntelligenceService(db)._jsonable(MarketIntelligenceService(db).calculate(symbol.upper(),as_of=market.timestamp))
+        except (ValueError,DataValidationError):logger.warning("intelligence unavailable: symbol=%s timestamp=%s",symbol,market.timestamp)
+    return {"timestamp":market.timestamp,"symbol":symbol.upper(),"market":asdict(market),"mtf_regime":intelligence.get("market_regime") if intelligence else None,"structure":intelligence.get("timeframes") if intelligence else None,"liquidity":intelligence.get("timeframes") if intelligence else None,"indicators":intelligence.get("timeframes") if intelligence else None,"neural_prediction":None,"cot_context":market.cot_context,"institutional_proxy":market.institutional_proxy,"data_quality":market.data_quality,"news_risk":market.news_risk,"strategy_state":"OBSERVE" if market.strategy_allowed else "BLOCKED","reasons":market.reasons}
+
+
+def strategy_row(row: Any, field: str) -> dict[str, Any]:
+    if row is None:
+        raise HTTPException(status_code=404, detail="No Phase 6 research result found")
+    return getattr(row, field)
+
+
+@app.get("/strategy/setup/latest")
+def latest_strategy_setup(symbol: str | None = None, db: Session = Depends(get_db)) -> dict[str, Any]:
+    return strategy_row(StrategyRepository(db).latest_setup(symbol), "setup_json")
+
+
+@app.get("/strategy/snapshot/{symbol}")
+def latest_strategy_snapshot(symbol: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    return strategy_row(StrategyRepository(db).latest_snapshot(symbol), "snapshot_json")
+
+
+@app.get("/strategy/decision/latest")
+def latest_strategy_decision(symbol: str | None = None, db: Session = Depends(get_db)) -> dict[str, Any]:
+    return strategy_row(StrategyRepository(db).latest_decision(symbol), "decision_json")
+
+
+@app.get("/strategy/backtest/latest")
+def latest_strategy_backtest(db: Session = Depends(get_db)) -> dict[str, Any]:
+    return strategy_row(StrategyRepository(db).latest_backtest(), "result_json")
+
+
+@app.get("/strategy/performance")
+def latest_strategy_performance(db: Session = Depends(get_db)) -> dict[str, Any]:
+    result = strategy_row(StrategyRepository(db).latest_backtest(), "result_json")
+    return result.get("performance", result)
 
 
 @app.get("/api/system/status")

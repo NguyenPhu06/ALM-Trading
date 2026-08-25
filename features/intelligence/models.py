@@ -39,6 +39,14 @@ class TimeframeIntelligence:
     session: str | None
     session_range: float | None
     calculation_version: str = CALCULATION_VERSION
+    ohlcv: dict[str, Any] = field(default_factory=dict)
+    candle_closed: bool | None = None
+    internal_structure: str | None = None
+    swing_structure: str | None = None
+    equal_highs: tuple[float, ...] = field(default_factory=tuple)
+    equal_lows: tuple[float, ...] = field(default_factory=tuple)
+    premium_discount: str | None = None
+    regime: str = "UNKNOWN"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,4 +88,13 @@ class MarketStateSnapshot:
     conflicts: tuple[str, ...]
     feature_vector: FeatureVector
     calculation_version: str = CALCULATION_VERSION
+    market_regime: dict[str, Any] = field(default_factory=dict)
+    mtf_alignment: str = "INSUFFICIENT"
+    confidence: float = 0.0
+    data_quality: dict[str, Any] = field(default_factory=dict)
     signal: None = field(default=None)
+
+
+# Stable public names requested by downstream dataset/backtest consumers.
+MarketSnapshot = MarketStateSnapshot
+MarketIntelligenceSnapshot = MarketStateSnapshot

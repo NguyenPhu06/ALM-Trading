@@ -1,10 +1,10 @@
-# Data providers
+# Nhà cung cấp dữ liệu
 
-`BaseMarketDataProvider` isolates connect, disconnect, historical, latest, incremental, and health operations. Provider-specific response formats do not enter features, backtests, strategies, or repositories.
+`BaseMarketDataProvider` cô lập các thao tác connect, disconnect, historical, latest, incremental và health. Định dạng phản hồi riêng của provider không đi vào feature, backtest, strategy hay repository.
 
-The initial adapter uses Twelve Data's authorized REST API. Its documented time-series API supports FX and the required native intervals, UTC output, bounded date ranges, and up to 5,000 points per request. The adapter chunks larger requests, rate-limits calls, applies finite exponential-backoff retries, sets a timeout, and never writes API keys to logs. See the official [API documentation](https://twelvedata.com/docs), [historical data guide](https://support.twelvedata.com/en/articles/5656039-how-to-get-historical-prices), and [credit model](https://support.twelvedata.com/en/articles/5615854-credits).
+Adapter ban đầu dùng REST API được cấp quyền của Twelve Data. API time-series được tài liệu hóa hỗ trợ FX, các interval native cần thiết, đầu ra UTC, khoảng ngày giới hạn và tối đa 5.000 điểm mỗi request. Adapter chia nhỏ request lớn, giới hạn tần suất, retry hữu hạn với exponential backoff, đặt timeout và không bao giờ ghi API key vào log. Xem [tài liệu API](https://twelvedata.com/docs), [hướng dẫn dữ liệu lịch sử](https://support.twelvedata.com/en/articles/5656039-how-to-get-historical-prices) và [mô hình credit](https://support.twelvedata.com/en/articles/5615854-credits).
 
-Configuration is environment-only:
+Cấu hình chỉ qua biến môi trường:
 
 ```text
 MARKET_DATA_PROVIDER=historical
@@ -16,6 +16,8 @@ MARKET_DATA_MAX_RETRIES=3
 MARKET_DATA_BACKOFF_SECONDS=1
 ```
 
-An absent key produces `UNCONFIGURED`; it never falls back to sample data or TradingView. TradingView remains an isolated webhook/visualization input and is not a canonical machine-readable price feed.
+Thiếu API key tạo trạng thái `UNCONFIGURED`; hệ thống không tự chuyển sang dữ liệu mẫu hoặc TradingView. TradingView vẫn là đầu vào webhook/visualization độc lập, không phải price feed máy đọc chuẩn.
 
-FX volume availability and historical depth depend on the provider/subscription. Missing volume remains `null`; it is not fabricated. The read-only `MT5MarketDataProvider` interface is a future integration boundary and contains no execution methods.
+Phase 3 cũng có `CSVProvider` cho file được cung cấp rõ ràng và `MockProvider` cho test xác định. Các interface placeholder cho TradingView market data, Polygon, MT5, broker và exchange không chứa logic kết nối hoặc thực thi lệnh.
+
+Khả năng có volume FX và độ sâu lịch sử phụ thuộc provider/gói thuê bao. Volume thiếu vẫn là `null`, không được bịa. `MT5MarketDataProvider` read-only là ranh giới tích hợp tương lai và không có phương thức thực thi.

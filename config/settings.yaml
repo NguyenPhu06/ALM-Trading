@@ -59,13 +59,14 @@ institutional_mtf:
     EURUSD: EURO FX
 
 market_data:
-  symbols: [EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, USDCAD, NZDUSD]
-  timeframes: [D1, H4, H1, M15, M5, M1]
+  symbols: [EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, USDCAD, NZDUSD, XAUUSD]
+  timeframes: [D1, H4, H1, M30, M15, M5, M1]
   sample_sources: [local_csv]
   freshness_threshold_seconds:
     M1: 180
     M5: 900
     M15: 2700
+    M30: 5400
     H1: 10800
     H4: 43200
     D1: 259200
@@ -74,10 +75,11 @@ market_data:
 phase_3:
   calculation_version: phase3.v1
   timeframe_weights:
-    D1: 0.35
-    H4: 0.25
-    H1: 0.20
-    M15: 0.10
+    D1: 0.30
+    H4: 0.24
+    H1: 0.18
+    M30: 0.10
+    M15: 0.08
     M5: 0.06
     M1: 0.04
   swing_left_bars: 2
@@ -100,3 +102,62 @@ phase_3:
   senkou_b_period: 52
   volatility_period: 20
   abnormal_spread_ratio: 0.001
+
+phase_4:
+  base_timeframe: M15
+  timeframes: [D1, H4, H1, M30, M15, M5]
+  feature_version: phase4.features.v1
+  label_version: phase4.labels.v1
+  classification_threshold: 0.0005
+  outcome_threshold: 0.001
+  train_ratio: 0.70
+  validation_ratio: 0.15
+  minimum_samples: 1000
+
+phase_5:
+  learning_rate: 0.01
+  batch_size: 32
+  epochs: 100
+  hidden_layers: 1
+  hidden_units: 32
+  dropout: 0.10
+  early_stopping: true
+  early_stopping_patience: 10
+  minimum_improvement: 0.0001
+  random_seed: 42
+  class_weighting: true
+  overfitting_loss_gap: 0.20
+  calibration_bins: 10
+  minimum_dataset_samples: 1000
+
+phase_6:
+  strategy_version: phase6.strategy.v1
+  timezone: UTC
+  ready_score: 65
+  simulation_score: 75
+  even_hour_entry_enabled: false
+  scoring_weights:
+    structure_alignment: 0.22
+    liquidity_alignment: 0.18
+    mtf_alignment: 0.22
+    indicator_alignment: 0.12
+    nn_alignment: 0.10
+    volatility_quality: 0.08
+    session_quality: 0.08
+  risk:
+    max_position_size: 1.0
+    max_dca_entries: 3
+    max_total_exposure: 3.0
+    max_drawdown_allowed: 0.02
+  transaction_costs:
+    spread: 0.0001
+    commission: 0.0
+    slippage: 0.00002
+
+phase_7:
+  quote_cache_ttl_seconds: 5
+  candle_cache_ttl_seconds: 30
+  provider_metadata_ttl_seconds: 300
+  polling_interval_seconds: 60
+  high_impact_news_filter: true
+  snapshot_timeframes: [D1, H4, H1, M30, M15, M5]

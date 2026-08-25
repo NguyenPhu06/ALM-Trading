@@ -11,6 +11,7 @@ class MarketDataResampler:
     CONVERSIONS = {
         ("M1", "M5"): 5,
         ("M5", "M15"): 3,
+        ("M15", "M30"): 2,
         ("M15", "H1"): 4,
         ("H1", "H4"): 4,
         ("H4", "D1"): 6,
@@ -35,7 +36,7 @@ class MarketDataResampler:
             return timestamp.replace(hour=(timestamp.hour // 4) * 4, minute=0, second=0, microsecond=0)
         if target == "H1":
             return timestamp.replace(minute=0, second=0, microsecond=0)
-        minutes = 15 if target == "M15" else 5
+        minutes = 30 if target == "M30" else 15 if target == "M15" else 5
         return timestamp.replace(minute=(timestamp.minute // minutes) * minutes, second=0, microsecond=0)
 
     def resample(

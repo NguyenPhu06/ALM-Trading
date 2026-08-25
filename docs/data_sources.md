@@ -1,31 +1,31 @@
-# Data sources and semantics
+# Nguồn dữ liệu và ngữ nghĩa
 
-ALM distinguishes observations by timing and derivation so later research cannot accidentally treat slow or inferred values as live facts.
+ALM phân biệt quan sát theo độ trễ và cách suy diễn để nghiên cứu sau này không vô tình coi dữ liệu chậm hoặc dữ liệu suy ra là sự thật thời gian thực.
 
-| Source/data | Class | Meaning |
+| Nguồn/dữ liệu | Phân loại | Ý nghĩa |
 |---|---|---|
-| TradingView webhook | REAL-TIME event transport | Alert/event data created by configured TradingView logic; it is not a complete tick feed. |
-| Market ticks (future adapter) | REAL-TIME | Licensed broker/exchange observations when implemented. |
-| CFTC TFF COT | PERIODIC | Institutional Positioning reported weekly, normally reflecting Tuesday positions and published later. |
-| Local CSV candles | HISTORICAL | Reproducible sample/imported OHLCV market data. |
-| Broker/MT5/futures/exchange candles (future) | REAL-TIME or HISTORICAL | Classification depends on the licensed endpoint and request mode. |
-| News (future) | REAL-TIME or HISTORICAL | Timestamped provider content; source latency must be recorded. |
-| Open interest and volume (future) | PERIODIC or REAL-TIME | Provider-specific observations; semantics and latency must be documented per adapter. |
-| Liquidity/structure events | INFERRED | ALM-derived market-structure estimates, not actual institutional orders. |
-| Institutional pressure | INFERRED | Composite estimate from available public or licensed inputs; absent inputs remain `NULL`. |
+| TradingView webhook | Vận chuyển sự kiện REAL-TIME | Dữ liệu cảnh báo/sự kiện do logic TradingView đã cấu hình tạo ra; không phải tick feed hoàn chỉnh. |
+| Market tick (adapter tương lai) | REAL-TIME | Quan sát được cấp phép từ broker/exchange khi triển khai. |
+| CFTC TFF COT | PERIODIC | Vị thế tổ chức báo cáo hàng tuần, thường phản ánh vị thế thứ Ba và được công bố sau đó. |
+| Candle CSV cục bộ | HISTORICAL | Dữ liệu OHLCV mẫu/import có thể tái lập. |
+| Candle broker/MT5/futures/exchange (tương lai) | REAL-TIME hoặc HISTORICAL | Phân loại phụ thuộc endpoint được cấp phép và chế độ request. |
+| Tin tức (tương lai) | REAL-TIME hoặc HISTORICAL | Nội dung có timestamp từ provider; phải lưu độ trễ nguồn. |
+| Open interest và volume (tương lai) | PERIODIC hoặc REAL-TIME | Quan sát phụ thuộc provider; phải mô tả ngữ nghĩa và độ trễ cho từng adapter. |
+| Sự kiện liquidity/structure | INFERRED | Ước lượng cấu trúc thị trường do ALM suy ra, không phải lệnh thật của tổ chức. |
+| Institutional pressure | INFERRED | Ước lượng tổng hợp từ đầu vào công khai hoặc được cấp phép; đầu vào thiếu giữ nguyên `NULL`. |
 
-## CFTC COT limitations
+## Giới hạn của CFTC COT
 
-COT is periodic positioning data, not realtime institutional order flow and not “real-time whale orders.” The Phase 1A collector uses the official CFTC current TFF Futures Only feed because its Dealer, Asset Manager, Leveraged Money, Other Reportables, and Non-Reportables classifications match the database model. The configurable parser accepts the official headerless weekly text format as well as CSV/JSON exports. Raw source rows are retained. Publication delay, revisions, market-to-FX symbol mapping, and aggregation must be respected by features to prevent look-ahead bias.
+COT là dữ liệu vị thế định kỳ, không phải dòng lệnh tổ chức thời gian thực hay “lệnh cá voi thời gian thực”. Collector Phase 1A dùng feed CFTC TFF Futures Only chính thức vì các nhóm Dealer, Asset Manager, Leveraged Money, Other Reportables và Non-Reportables phù hợp model database. Parser có cấu hình chấp nhận định dạng text tuần không header chính thức cũng như bản xuất CSV/JSON. Hàng nguồn thô được giữ lại. Feature phải tôn trọng độ trễ công bố, bản sửa đổi, ánh xạ market sang FX symbol và phép tổng hợp để tránh look-ahead bias.
 
-ALM estimates institutional positioning or pressure using available public or licensed data. It cannot know which specific fund is buying a particular FX pair.
+ALM chỉ ước lượng vị thế hoặc áp lực tổ chức bằng dữ liệu công khai/được cấp phép hiện có. Hệ thống không thể biết quỹ cụ thể nào đang mua một cặp FX.
 
-## Webhook authentication
+## Xác thực webhook
 
-The preferred mechanism is the `X-TradingView-Secret` header and constant-time comparison. If an alert setup cannot send headers, a `secret` JSON field is accepted when enabled. That fallback exposes the credential to more systems involved in payload construction; use HTTPS, a long random value, rotation, and restricted ingress. The `secret` field is removed before raw-payload audit storage and never logged.
+Cơ chế ưu tiên là header `X-TradingView-Secret` với phép so sánh constant-time. Nếu cấu hình alert không gửi được header, trường JSON `secret` có thể được chấp nhận khi được bật. Cách dự phòng này làm credential đi qua nhiều hệ thống hơn; cần dùng HTTPS, giá trị ngẫu nhiên dài, xoay vòng secret và giới hạn ingress. Trường `secret` bị loại trước khi lưu payload thô để kiểm toán và không bao giờ được log.
 
-The CFTC URL is configurable in `config/settings.yaml`; a future switch to the SODA API should source any `X-App-Token` from an environment secret rather than embedding credentials in configuration.
+URL CFTC có thể cấu hình trong `config/settings.yaml`. Nếu tương lai chuyển sang SODA API, `X-App-Token` phải lấy từ secret môi trường thay vì ghi trực tiếp trong cấu hình.
 
-## Future adapters
+## Adapter tương lai
 
-`MarketDataProvider` defines candle/latest reads for Local CSV, future MT5, broker, and exchange implementations. `future_interfaces.py` defines read-only contracts for futures, news, open interest, volume, and order-book providers. Phase 1A contains no live connection and no order method. Each future adapter must perform raw → normalize → validate → repository, identify source and license, use UTC, preserve relevant raw data, expose latency, and reject malformed observations.
+`MarketDataProvider` định nghĩa thao tác đọc candle/latest cho Local CSV, MT5, broker và exchange tương lai. `future_interfaces.py` định nghĩa contract read-only cho futures, news, open interest, volume và order book. Phase 1A không có kết nối live hay phương thức đặt lệnh. Mỗi adapter tương lai phải thực hiện raw → normalize → validate → repository, xác định nguồn và license, dùng UTC, giữ dữ liệu thô cần thiết, công bố độ trễ và từ chối quan sát sai định dạng.

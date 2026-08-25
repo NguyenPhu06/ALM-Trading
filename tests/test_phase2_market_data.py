@@ -123,7 +123,7 @@ def test_incremental_update_starts_after_latest_closed_candle(db_session):
 
 @pytest.mark.parametrize(
     ("source_tf", "target_tf", "count", "minutes"),
-    [("M1", "M5", 5, 1), ("M5", "M15", 3, 5), ("M15", "H1", 4, 15),
+    [("M1", "M5", 5, 1), ("M5", "M15", 3, 5), ("M15", "M30", 2, 15), ("M15", "H1", 4, 15),
      ("H1", "H4", 4, 60), ("H4", "D1", 6, 240)],
 )
 def test_controlled_resampling_all_supported_conversions(source_tf, target_tf, count, minutes):

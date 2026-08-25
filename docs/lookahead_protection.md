@@ -1,22 +1,22 @@
-# Look-ahead protection
+# Bảo vệ chống look-ahead
 
-Phase 1B calculations are causal by construction.
+Các phép tính Phase 1B được thiết kế theo nguyên tắc nhân quả.
 
-## Rules
+## Quy tắc
 
-1. Candles must be ordered database records with `is_closed=true`. Engines stop at the first open candle even when called outside the pipeline.
-2. A fractal candidate is invisible until all configured right-side bars have closed. Production Phase 1B.1 requires two right bars.
-3. `event_timestamp` is the first time the event can be known.
-4. `confirmation_timestamp` records swing/level confirmation when applicable.
-5. Previous-day and previous-session levels appear only after the relevant period transitions.
-6. Current-session high/low is running state, never the future final session extreme.
-7. MTF and snapshots filter every event at an explicit `as_of` timestamp.
-8. The Phase 1B pipeline reads `market_candles` chronologically from the database; it does not manufacture missing candles.
-9. M15→H1/H4/D1 aggregation emits only complete UTC buckets. The higher-timeframe `close_time` is its earliest usable time.
-10. MTF alignment selects the last event whose event and confirmation timestamps are both at or before the M15 close.
+1. Candle phải là bản ghi database có thứ tự và `is_closed=true`. Engine dừng tại candle mở đầu tiên ngay cả khi được gọi ngoài pipeline.
+2. Ứng viên fractal không hiển thị cho đến khi toàn bộ bar phía phải theo cấu hình đã đóng. Production Phase 1B.1 yêu cầu hai right bar.
+3. `event_timestamp` là thời điểm đầu tiên sự kiện có thể được biết.
+4. `confirmation_timestamp` ghi thời điểm xác nhận swing/level khi áp dụng.
+5. Mức ngày trước và session trước chỉ xuất hiện sau khi period tương ứng chuyển tiếp.
+6. High/low của session hiện tại là trạng thái đang chạy, không phải cực trị cuối session trong tương lai.
+7. MTF và snapshot lọc mọi sự kiện tại timestamp `as_of` rõ ràng.
+8. Pipeline Phase 1B đọc `market_candles` theo thứ tự thời gian từ database; không tạo candle còn thiếu.
+9. Tổng hợp M15→H1/H4/D1 chỉ phát bucket UTC hoàn chỉnh. `close_time` của HTF là thời điểm sớm nhất được phép sử dụng.
+10. MTF alignment chọn sự kiện cuối cùng có cả event timestamp và confirmation timestamp nhỏ hơn hoặc bằng thời điểm đóng M15.
 
-`test_swing_detection_requires_right_confirmation_bar` proves a candidate is unavailable before its right bar. `test_future_extension_cannot_change_past_decisions` compares a prefix calculation with the same prefix inside a longer future series. Snapshot and session tests independently verify that later events and later highs/lows remain invisible.
+`test_swing_detection_requires_right_confirmation_bar` chứng minh ứng viên chưa khả dụng trước right bar. `test_future_extension_cannot_change_past_decisions` so sánh phép tính trên prefix với cùng prefix nằm trong chuỗi tương lai dài hơn. Các test snapshot và session độc lập xác nhận sự kiện cùng high/low về sau vẫn không nhìn thấy.
 
-Backtests should calculate incrementally or pass an `as_of_index`/`as_of` cutoff. Using the final swing list without respecting each event's confirmation timestamp would violate this contract.
+Backtest phải tính tăng dần hoặc truyền cutoff `as_of_index`/`as_of`. Dùng danh sách swing cuối cùng mà không tôn trọng confirmation timestamp của từng sự kiện sẽ vi phạm contract này.
 
-Snapshot regression tests compare a snapshot calculated from a candle prefix with the same timestamp calculated after future candles are appended. The results must remain identical.
+Regression test snapshot so sánh snapshot tính từ một prefix candle với snapshot tại cùng timestamp sau khi thêm candle tương lai. Kết quả phải giống hệt nhau.

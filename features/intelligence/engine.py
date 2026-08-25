@@ -19,8 +19,8 @@ from features.volatility import VolatilityEngine
 
 
 class MarketIntelligenceEngine:
-    TIMEFRAMES = ("D1", "H4", "H1", "M15", "M5", "M1")
-    DEFAULT_WEIGHTS = {"D1": 0.35, "H4": 0.25, "H1": 0.20, "M15": 0.10, "M5": 0.06, "M1": 0.04}
+    TIMEFRAMES = ("D1", "H4", "H1", "M30", "M15", "M5", "M1")
+    DEFAULT_WEIGHTS = {"D1": 0.30, "H4": 0.24, "H1": 0.18, "M30": 0.10, "M15": 0.08, "M5": 0.06, "M1": 0.04}
     TREND_VALUE = {"BULLISH": 1.0, "BEARISH": -1.0, "RANGING": 0.0, "UNKNOWN": 0.0}
 
     def __init__(self):
@@ -36,6 +36,12 @@ class MarketIntelligenceEngine:
             swing_right_bars=int(phase.get("swing_right_bars", 2)),
             minimum_swing_distance=int(phase.get("minimum_swing_distance", 1)),
             minimum_swing_price_move=phase.get("minimum_swing_price_move", 0),
+            break_mode=phase.get("break_mode", "CLOSE_BREAK"),
+            equal_level_tolerance_points=float(phase.get("equal_level_tolerance_points", 3)),
+            point_size=phase.get("point_size", 0.00001),
+        )
+        self.internal_structure = MarketStructureEngine(
+            swing_left_bars=1, swing_right_bars=1,
             break_mode=phase.get("break_mode", "CLOSE_BREAK"),
             equal_level_tolerance_points=float(phase.get("equal_level_tolerance_points", 3)),
             point_size=phase.get("point_size", 0.00001),
@@ -100,9 +106,12 @@ class MarketIntelligenceEngine:
         )
         reasons = confluence.reasons
         conflicts = tuple(dict.fromkeys((*confluence.conflicts, *no_trade)))
+        regime = self._mtf_regime(states)
         return MarketStateSnapshot(
             utc_aware(as_of), symbol.upper(), dict(states), bias, bias_score, confluence,
             "NO_TRADE" if no_trade else "OBSERVE", tuple(no_trade), reasons, conflicts, vector,
+            market_regime=regime, mtf_alignment=regime["alignment"],
+            confidence=regime["confidence"], data_quality=self._data_quality(states, utc_aware(as_of)),
         )
 
     def _timeframe(
@@ -116,12 +125,17 @@ class MarketIntelligenceEngine:
                 {}, None, None, None, None, asdict(indicator), {}, None, None,
             )
         structure = self.structure.calculate(visible)
+        internal = self.internal_structure.calculate(visible)
         liquidity = self.liquidity.calculate(visible)
+        liquidity_map = self.liquidity.map_from_events(liquidity)
         swings_high = [event for event in structure if event.event_type == "SWING_HIGH"]
         swings_low = [event for event in structure if event.event_type == "SWING_LOW"]
         bos = next((event.direction for event in reversed(structure) if event.event_type.endswith("BOS")), None)
         choch = next((event.direction for event in reversed(structure) if event.event_type.endswith("CHOCH")), None)
         latest_structure = next((event.event_type for event in reversed(structure) if event.event_type in {"HH", "HL", "LH", "LL"}), None)
+        latest_internal = next((event.event_type for event in reversed(internal) if event.event_type in {"HH", "HL", "LH", "LL"}), None)
+        equal_highs = tuple(float(event.price) for event in structure if event.event_type == "EQUAL_HIGH")
+        equal_lows = tuple(float(event.price) for event in structure if event.event_type == "EQUAL_LOW")
         levels = [event for event in liquidity if event.event_type == "LIQUIDITY_LEVEL"]
         price = Decimal(str(candle_value(visible[-1], "close")))
         highs = [event for event in levels if event.price > price]
@@ -139,15 +153,21 @@ class MarketIntelligenceEngine:
         stats = self.session.statistics(visible)
         latest_stats = stats[-1] if stats else None
         latest_displacement = next((item for item in reversed(displacements) if item.displaced), None)
+        swing_high = float(swings_high[-1].price) if swings_high else None
+        swing_low = float(swings_low[-1].price) if swings_low else None
+        equilibrium = (swing_high + swing_low) / 2 if swing_high is not None and swing_low is not None else None
+        premium_discount = "PREMIUM" if equilibrium is not None and float(price) > equilibrium else "DISCOUNT" if equilibrium is not None and float(price) < equilibrium else "EQUILIBRIUM" if equilibrium is not None else None
+        trend = self.structure.trend_state(structure).value
+        regime = self._timeframe_regime(trend, choch, indicator_data.get("trend_direction"))
+        last = visible[-1]
         return TimeframeIntelligence(
             candle_close_time(visible[-1]), symbol, timeframe, True,
-            self.structure.trend_state(structure).value, latest_structure, bos, choch,
-            float(swings_high[-1].price) if swings_high else None,
-            float(swings_low[-1].price) if swings_low else None,
+            trend, latest_structure, bos, choch, swing_high, swing_low,
             {
                 "nearest_buy_side": float(min(highs, key=lambda item: item.price).price) if highs else None,
                 "nearest_sell_side": float(max(lows, key=lambda item: item.price).price) if lows else None,
                 "level_count": len(levels),
+                "levels": [asdict(item) for item in liquidity_map[-20:]],
             },
             asdict(sweep) if sweep else None,
             asdict(fvgs[-1]) if fvgs else None,
@@ -156,6 +176,10 @@ class MarketIntelligenceEngine:
             indicator_data, asdict(volatility) if volatility else {},
             self.session.session_for(candle_value(visible[-1], "timestamp")).value,
             latest_stats.range if latest_stats else None,
+            ohlcv={name: float(candle_value(last, name)) if candle_value(last, name) is not None else None for name in ("open", "high", "low", "close", "volume")},
+            candle_closed=True, internal_structure=latest_internal,
+            swing_structure=latest_structure, equal_highs=equal_highs, equal_lows=equal_lows,
+            premium_discount=premium_discount, regime=regime,
         )
 
     def _bias(self, states: Mapping[str, TimeframeIntelligence]) -> tuple[MarketBias, float]:
@@ -177,6 +201,71 @@ class MarketIntelligenceEngine:
             MarketBias.BEARISH if normalized <= -0.20 else MarketBias.NEUTRAL
         )
         return bias, round(normalized * 100.0, 2)
+
+    @staticmethod
+    def _timeframe_regime(trend: str, choch: str | None, indicator_direction: str | None) -> str:
+        if choch:
+            return "TRANSITIONAL"
+        if trend in {"BULLISH", "BEARISH"} and indicator_direction in {"BULLISH", "BEARISH"} and trend != indicator_direction:
+            return "CONFLICTING"
+        return trend
+
+    def _mtf_regime(self, states: Mapping[str, TimeframeIntelligence]) -> dict[str, Any]:
+        def group(timeframes: tuple[str, ...]) -> str:
+            score = sum(self.TREND_VALUE[states[timeframe].trend] for timeframe in timeframes if states[timeframe].available)
+            return "BULLISH" if score > 0 else "BEARISH" if score < 0 else "RANGING"
+
+        htf_frames, ltf_frames = ("D1", "H4", "H1"), ("M30", "M15", "M5")
+        higher, lower = group(htf_frames), group(ltf_frames)
+        available_required = sum(states[timeframe].available for timeframe in (*htf_frames, *ltf_frames))
+        coverage = available_required / 6.0
+        htf_trends = [states[timeframe].trend for timeframe in htf_frames if states[timeframe].available and states[timeframe].trend in {"BULLISH", "BEARISH"}]
+        if not htf_trends:
+            htf_agreement = 0.0
+        else:
+            htf_agreement = max(htf_trends.count("BULLISH"), htf_trends.count("BEARISH")) / len(htf_trends)
+        if higher in {"BULLISH", "BEARISH"} and lower == higher:
+            alignment, alignment_score = "ALIGNED", 1.0
+        elif higher in {"BULLISH", "BEARISH"} and lower in {"BULLISH", "BEARISH"}:
+            alignment, alignment_score = "COUNTER_TREND", 0.6
+        elif available_required < 3:
+            alignment, alignment_score = "INSUFFICIENT", 0.0
+        else:
+            alignment, alignment_score = "MIXED", 0.3
+        d1, h4 = states["D1"], states["H4"]
+        htf_conflict = d1.trend in {"BULLISH", "BEARISH"} and h4.trend in {"BULLISH", "BEARISH"} and d1.trend != h4.trend
+        transitional = any(states[timeframe].regime == "TRANSITIONAL" for timeframe in (*htf_frames, *ltf_frames))
+        if htf_conflict:
+            state = "CONFLICTING"
+        elif transitional or alignment == "COUNTER_TREND":
+            state = "TRANSITIONAL"
+        elif higher == "RANGING":
+            state = "RANGING"
+        else:
+            state = higher
+        confidence = round(100.0 * (0.4 * coverage + 0.4 * htf_agreement + 0.2 * alignment_score), 2)
+        return {
+            "state": state, "higher_timeframe_bias": higher,
+            "lower_timeframe_state": lower, "alignment": alignment,
+            "confidence": confidence,
+        }
+
+    @staticmethod
+    def _data_quality(states: Mapping[str, TimeframeIntelligence], as_of: datetime) -> dict[str, Any]:
+        available = [timeframe for timeframe, state in states.items() if state.available]
+        missing = [timeframe for timeframe, state in states.items() if not state.available]
+        insufficient = [
+            timeframe for timeframe, state in states.items()
+            if state.available and state.indicators.get("missing_reason") == "INSUFFICIENT_HISTORY"
+        ]
+        timestamps = [state.timestamp for state in states.values() if state.timestamp is not None]
+        return {
+            "available_timeframes": available, "missing_timeframes": missing,
+            "insufficient_indicator_history": insufficient,
+            "latest_feature_timestamp": max(timestamps) if timestamps else None,
+            "as_of": as_of, "all_candles_closed": all(state.candle_closed is not False for state in states.values()),
+            "news_risk_available": False,
+        }
 
     def _confluence(
         self, states: Mapping[str, TimeframeIntelligence], bias: MarketBias, bias_score: float,
@@ -236,7 +325,7 @@ class MarketIntelligenceEngine:
             names.append(f"trend_{timeframe.lower()}")
             values.append(encode_trend[states[timeframe].trend])
         for indicator in ("rsi", "adx"):
-            for timeframe in ("D1", "H4", "H1", "M15", "M5"):
+            for timeframe in ("D1", "H4", "H1", "M30", "M15", "M5"):
                 names.append(f"{indicator}_{timeframe.lower()}")
                 values.append(float(states[timeframe].indicators.get(indicator) or 0.0))
         for timeframe in ("H1", "M15", "M5"):
@@ -248,11 +337,28 @@ class MarketIntelligenceEngine:
             m15.liquidity.get("nearest_buy_side"), m15.liquidity.get("nearest_sell_side"),
         ) if value is not None]
         liquidity_distance = min((abs(float(value) - close) for value in liquidity_prices), default=0.0)
+        nearest_type = 0.0
+        if liquidity_prices and close:
+            nearest = min(liquidity_prices, key=lambda value: abs(float(value) - close))
+            nearest_type = 1.0 if nearest == m15.liquidity.get("nearest_buy_side") else -1.0
         sweep_direction = 1.0 if m15.sweep and m15.sweep.get("direction") == "BULLISH" else -1.0 if m15.sweep and m15.sweep.get("direction") == "BEARISH" else 0.0
         fvg_mid = (float(m15.fvg["upper_price"]) + float(m15.fvg["lower_price"])) / 2 if m15.fvg else close
         block_mid = (float(m15.order_block["zone_high"]) + float(m15.order_block["zone_low"])) / 2 if m15.order_block else close
-        names.extend(("liquidity_distance", "sweep_direction", "fvg_distance", "order_block_distance"))
-        values.extend((liquidity_distance, sweep_direction, abs(fvg_mid - close), abs(block_mid - close)))
+        premium_map = {None: 0.0, "DISCOUNT": -1.0, "EQUILIBRIUM": 0.0, "PREMIUM": 1.0}
+        structure_map = {None: 0.0, "LL": -2.0, "LH": -1.0, "HL": 1.0, "HH": 2.0}
+        direction_map = {None: 0.0, "BEARISH": -1.0, "BULLISH": 1.0}
+        ichimoku_state = 1.0 if m15.indicators.get("price_above_cloud") else -1.0 if m15.indicators.get("price_below_cloud") else 0.0
+        names.extend((
+            "liquidity_distance", "nearest_liquidity_type", "sweep_direction",
+            "fvg_distance", "order_block_distance", "premium_discount",
+            "ichimoku_state", "structure_state", "bos", "choch", "spread", "news_risk",
+        ))
+        values.extend((
+            liquidity_distance, nearest_type, sweep_direction, abs(fvg_mid - close), abs(block_mid - close),
+            premium_map[m15.premium_discount], ichimoku_state, structure_map.get(m15.structure, 0.0),
+            direction_map.get(m15.bos, 0.0), direction_map.get(m15.choch, 0.0),
+            float(m15.indicators.get("spread") or 0.0), 0.0,
+        ))
         session_map = {name.value: float(index) for index, name in enumerate(SessionName)}
         volatility_map = {None: 0.0, "LOW_VOLATILITY": 1.0, "NORMAL_VOLATILITY": 2.0, "HIGH_VOLATILITY": 3.0, "EXTREME_VOLATILITY": 4.0}
         names.extend(("session", "volatility_state"))

@@ -42,6 +42,11 @@ class MarketCandle(Base):
     resampling_method: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
+    @property
+    def ingested_at(self) -> datetime:
+        """Canonical Phase 4 name backed by the existing Phase 2 ingestion_time column."""
+        return self.ingestion_time
+
 
 class MarketDataIngestion(Base):
     __tablename__ = "market_data_ingestions"
@@ -254,8 +259,180 @@ class TradingOutcome(Base):
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
 
+class SimulatedTradeRecord(Base):
+    __tablename__ = "simulated_trades"
+    __table_args__ = (Index("ix_simulated_trades_entry_time", "entry_time"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entry_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False)
+    exit_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    exit_price: Mapped[float | None] = mapped_column(Float)
+    direction: Mapped[str] = mapped_column(String(8), nullable=False)
+    size: Mapped[float] = mapped_column(Float, nullable=False)
+    pnl: Mapped[float] = mapped_column(Float, nullable=False)
+    drawdown: Mapped[float] = mapped_column(Float, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    counter_trend_trade: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    entries_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    evaluations_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class MarketFeature(Base):
+    __tablename__ = "market_features"
+    __table_args__ = (
+        UniqueConstraint("symbol", "base_timeframe", "timestamp", "feature_version", name="uq_market_feature_version"),
+        Index("ix_market_features_symbol_timestamp", "symbol", "timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    base_timeframe: Mapped[str] = mapped_column(String(8), nullable=False, default="M15")
+    feature_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    features_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    schema_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class MarketLabel(Base):
+    __tablename__ = "market_labels"
+    __table_args__ = (
+        UniqueConstraint("symbol", "base_timeframe", "timestamp", "label_version", name="uq_market_label_version"),
+        Index("ix_market_labels_symbol_timestamp", "symbol", "timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    label_end_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    base_timeframe: Mapped[str] = mapped_column(String(8), nullable=False, default="M15")
+    label_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    labels_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class DatasetMetadataRecord(Base):
+    __tablename__ = "dataset_metadata"
+    __table_args__ = (Index("ix_dataset_metadata_symbol_created", "symbol", "created_at"),)
+
+    dataset_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    timeframes_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    feature_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    label_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    data_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    dataset_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class StrategyMarketSnapshot(Base):
+    __tablename__ = "market_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    strategy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    feature_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class TradeSetupRecord(Base):
+    __tablename__ = "trade_setups"
+    setup_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    feature_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_version: Mapped[str | None] = mapped_column(String(64))
+    setup_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class StrategyDecisionRecord(Base):
+    __tablename__ = "strategy_decisions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    setup_id: Mapped[str | None] = mapped_column(String(64))
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class PredictionRecord(Base):
+    __tablename__ = "predictions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    model_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    feature_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    prediction_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class DCAEventRecord(Base):
+    __tablename__ = "dca_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    setup_id: Mapped[str | None] = mapped_column(String(64))
+    strategy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ExitDecisionRecord(Base):
+    __tablename__ = "exit_decisions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    setup_id: Mapped[str | None] = mapped_column(String(64))
+    strategy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class StrategyBacktestRecord(Base):
+    __tablename__ = "strategy_backtests"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    feature_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_version: Mapped[str | None] = mapped_column(String(64))
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+class MarketQuote(Base):
+    __tablename__="market_quotes"
+    id:Mapped[int]=mapped_column(Integer,primary_key=True,autoincrement=True)
+    timestamp:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False,index=True)
+    symbol:Mapped[str]=mapped_column(String(32),nullable=False,index=True)
+    bid:Mapped[float|None]=mapped_column(Float);ask:Mapped[float|None]=mapped_column(Float);spread:Mapped[float|None]=mapped_column(Float);spread_percent:Mapped[float|None]=mapped_column(Float);mid_price:Mapped[float|None]=mapped_column(Float)
+    bid_volume:Mapped[float|None]=mapped_column(Float);ask_volume:Mapped[float|None]=mapped_column(Float);tick_volume:Mapped[float|None]=mapped_column(Float)
+    source:Mapped[str]=mapped_column(String(64),nullable=False);ingestion_timestamp:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+
+class MarketSessionRecord(Base):
+    __tablename__="market_sessions";id:Mapped[int]=mapped_column(Integer,primary_key=True);timestamp:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False);symbol:Mapped[str]=mapped_column(String(32),nullable=False);session:Mapped[str]=mapped_column(String(64),nullable=False);source:Mapped[str]=mapped_column(String(64),nullable=False);ingestion_timestamp:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+class DataQualityReportRecord(Base):
+    __tablename__="data_quality_reports";id:Mapped[int]=mapped_column(Integer,primary_key=True);timestamp:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False);symbol:Mapped[str]=mapped_column(String(32),nullable=False);timeframe:Mapped[str]=mapped_column(String(8),nullable=False);status:Mapped[str]=mapped_column(String(16),nullable=False);report_json:Mapped[dict[str,Any]]=mapped_column(JSON,nullable=False);source:Mapped[str]=mapped_column(String(64),nullable=False);ingestion_timestamp:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+class ProviderStatusRecord(Base):
+    __tablename__="provider_status";id:Mapped[int]=mapped_column(Integer,primary_key=True);timestamp:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False);provider:Mapped[str]=mapped_column(String(64),nullable=False);status:Mapped[str]=mapped_column(String(32),nullable=False);metadata_json:Mapped[dict[str,Any]]=mapped_column(JSON,nullable=False);source:Mapped[str]=mapped_column(String(64),nullable=False);ingestion_timestamp:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+class InstitutionalObservationRecord(Base):
+    __tablename__="institutional_observations";id:Mapped[int]=mapped_column(Integer,primary_key=True);timestamp:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False);asset:Mapped[str]=mapped_column(String(32),nullable=False);provider_status:Mapped[str]=mapped_column(String(32),nullable=False);pressure_proxy:Mapped[float|None]=mapped_column(Float);confidence:Mapped[float]=mapped_column(Float,nullable=False);is_proxy:Mapped[bool]=mapped_column(Boolean,nullable=False,default=True);source:Mapped[str]=mapped_column(String(64),nullable=False);ingestion_timestamp:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+class MarketDatasetRecord(Base):
+    __tablename__="market_datasets";dataset_id:Mapped[str]=mapped_column(String(128),primary_key=True);source:Mapped[str]=mapped_column(String(64),nullable=False);symbol:Mapped[str]=mapped_column(String(32),nullable=False);timeframe:Mapped[str]=mapped_column(String(8),nullable=False);start_time:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False);end_time:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False);created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False);metadata_json:Mapped[dict[str,Any]]=mapped_column(JSON,nullable=False)
+class EconomicCalendarEventRecord(Base):
+    __tablename__="economic_calendar_events";id:Mapped[int]=mapped_column(Integer,primary_key=True);event:Mapped[str]=mapped_column(String(255),nullable=False);currency:Mapped[str]=mapped_column(String(8),nullable=False);importance:Mapped[str]=mapped_column(String(16),nullable=False);scheduled_time:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False);actual:Mapped[float|None]=mapped_column(Float);forecast:Mapped[float|None]=mapped_column(Float);previous:Mapped[float|None]=mapped_column(Float);source:Mapped[str]=mapped_column(String(64),nullable=False);ingestion_timestamp:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+
+
 __all__ = [
     "MarketCandle", "MarketDataIngestion", "MarketTick", "TradingViewAlert", "LiquidityEvent",
     "StructureEvent", "IndicatorSnapshot", "MarketIntelligenceSnapshot", "COTReport", "InstitutionalPressure",
-    "StrategySignal", "TradingOutcome",
+    "StrategySignal", "TradingOutcome", "SimulatedTradeRecord", "MarketFeature",
+    "MarketLabel", "DatasetMetadataRecord", "StrategyMarketSnapshot", "TradeSetupRecord",
+    "StrategyDecisionRecord", "PredictionRecord", "DCAEventRecord", "ExitDecisionRecord",
+    "StrategyBacktestRecord",
+    "MarketQuote", "MarketSessionRecord", "DataQualityReportRecord", "ProviderStatusRecord",
+    "InstitutionalObservationRecord", "MarketDatasetRecord", "EconomicCalendarEventRecord",
 ]

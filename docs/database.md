@@ -1,31 +1,32 @@
-# Database architecture
+# Kiến trúc cơ sở dữ liệu
 
-## Candle lifecycle
+## Vòng đời candle
 
-`market_candles.is_closed` is the Phase 1B.1 causal boundary. Historical CSV imports set it to `true`; normalizer input without an explicit closed state defaults to `false` for live/in-progress safety. Migration `20260824_0003` backfills existing historical records to `true`. Structure, liquidity, resampling, and snapshots never consume an open candle.
+`market_candles.is_closed` là ranh giới nhân quả của Phase 1B.1. Import CSV lịch sử đặt trường này thành `true`; đầu vào normalizer không có trạng thái đóng rõ ràng mặc định là `false` để bảo vệ trường hợp dữ liệu live/đang hình thành. Migration `20260824_0003` cập nhật các bản ghi lịch sử đã có thành `true`. Structure, liquidity, resampling và snapshot không bao giờ sử dụng candle đang mở.
 
-ALM uses one repository-controlled persistence path: source adapter → parser → normalizer → validator → repository → PostgreSQL. Collectors never scatter SQL across source modules. The Docker database image is PostgreSQL 17 with the TimescaleDB extension available; Phase 1A uses ordinary PostgreSQL tables and indexes, so migrations remain portable. Converting high-volume tables to hypertables is deliberately deferred until retention, partitioning, and uniqueness policies are agreed.
+ALM chỉ dùng một đường ghi dữ liệu do repository kiểm soát: source adapter → parser → normalizer → validator → repository → PostgreSQL. Collector không rải SQL trong các module nguồn. Docker sử dụng PostgreSQL 17 với extension TimescaleDB sẵn có; Phase 1A dùng bảng và index PostgreSQL thông thường nên migration vẫn có tính di động. Việc chuyển bảng dung lượng lớn thành hypertable được hoãn cho đến khi thống nhất chính sách lưu giữ, phân vùng và tính duy nhất.
 
-## Tables and relationships
+## Bảng và quan hệ
 
-- `market_candles`: normalized OHLCV data. `(symbol, timeframe, timestamp)` is unique and indexed.
-- `market_ticks`: tick interface storage, indexed by symbol/time; realtime ingestion is not active.
-- `tradingview_alerts`: validated alert fields plus an audit copy of the source payload. A payload authentication field is removed before storage.
-- `liquidity_events`: future ALM-derived events such as swing/equal/session levels and liquidity sweeps.
-- `structure_events`: future HH, HL, LH, LL, BOS, CHoCH, and invalidation events.
-- `indicator_snapshots`: future indicator-engine output. Collectors do not calculate indicators.
-- `cot_reports`: periodic CFTC TFF positioning, unique by report date, market, contract, and source; raw rows are retained.
-- `institutional_pressure`: nullable component estimates. Phase 1A creates no values.
-- `strategy_signals` and `trading_outcomes`: minimal future dataset/label interfaces. They do not execute trades.
+- `market_candles`: dữ liệu OHLCV đã chuẩn hóa. `(symbol, timeframe, timestamp, source)` là định danh duy nhất và được đánh index.
+- `market_ticks`: nơi lưu cho interface tick; chưa kích hoạt ingestion thời gian thực.
+- `tradingview_alerts`: các trường cảnh báo đã kiểm tra cùng bản sao payload nguồn để kiểm toán. Trường xác thực bị loại trước khi lưu.
+- `liquidity_events`: sự kiện do ALM suy ra như mức swing/equal/session và liquidity sweep.
+- `structure_events`: các sự kiện HH, HL, LH, LL, BOS, CHoCH và vô hiệu hóa.
+- `indicator_snapshots`: đầu ra của Indicator Engine. Collector không tính indicator.
+- `cot_reports`: vị thế CFTC TFF định kỳ, duy nhất theo ngày báo cáo, thị trường, hợp đồng và nguồn; hàng dữ liệu gốc được giữ lại.
+- `institutional_pressure`: các ước lượng thành phần có thể là `NULL`. Phase 1A không tạo giá trị.
+- `strategy_signals` và `trading_outcomes`: interface tối thiểu cho dataset/label tương lai; không thực thi giao dịch.
+- `market_features`, `market_labels`, `dataset_metadata`: feature, label và metadata dataset có version của Phase 4; không sao chép candle gốc.
 
-Logical joins use symbol, timeframe, and event/report time. Hard foreign keys are avoided for independently arriving market observations. `trading_outcomes.signal_id` is a future logical reference and is intentionally not populated now.
+Các phép nối logic dùng symbol, timeframe và thời điểm sự kiện/báo cáo. Tránh foreign key cứng giữa những quan sát thị trường đến độc lập. `trading_outcomes.signal_id` là tham chiếu logic tương lai và hiện chưa được điền.
 
-## Time and precision
+## Thời gian và độ chính xác
 
-All market timestamps must be timezone-aware and are normalized to UTC before validation. PostgreSQL columns use `TIMESTAMP WITH TIME ZONE`; clients must render explicit offsets. Price and volume values use fixed-precision numeric columns rather than binary floats. COT report dates are dates because the data is periodic, not intraday.
+Mọi timestamp thị trường phải có timezone và được chuẩn hóa sang UTC trước khi kiểm tra. PostgreSQL dùng `TIMESTAMP WITH TIME ZONE`; client phải hiển thị offset rõ ràng. Giá và volume dùng cột số có độ chính xác cố định thay vì số thực nhị phân. Ngày báo cáo COT dùng kiểu ngày vì dữ liệu mang tính định kỳ, không phải intraday.
 
-## Raw, normalized, and retention data
+## Dữ liệu thô, dữ liệu chuẩn hóa và lưu giữ
 
-Raw TradingView JSON and CFTC rows are retained for audit; secrets are never retained. Normalized columns are queryable and validated. Invalid records are logged and rejected rather than silently repaired. No default deletion policy is applied in Phase 1A. Production retention, compression, backups, and Timescale hypertable/chunk policies must be selected from observed volume and regulatory needs before activation.
+JSON TradingView thô và hàng CFTC được giữ để kiểm toán; secret không được lưu. Các cột chuẩn hóa có thể truy vấn và đã được kiểm tra. Bản ghi sai bị log và từ chối thay vì tự sửa im lặng. Phase 1A không áp dụng chính sách xóa mặc định. Trước khi kích hoạt production cần chọn chính sách retention, compression, backup và Timescale hypertable/chunk dựa trên dung lượng quan sát được và yêu cầu pháp lý.
 
-Migrations are managed by Alembic (`alembic upgrade head`). The database volume `postgres_data` persists across container recreation.
+Migration được quản lý bằng Alembic (`alembic upgrade head`). Volume `postgres_data` duy trì dữ liệu khi container được tạo lại.

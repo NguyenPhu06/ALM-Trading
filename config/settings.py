@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def enforce_phase_safety(self) -> "Settings":
         if self.live_trading_enabled:
-            raise ValueError("LIVE_TRADING_ENABLED must be false during Phase 1A/1B/2")
+            raise ValueError("LIVE_TRADING_ENABLED must be false during Phases 1-7")
         return self
 
     @property

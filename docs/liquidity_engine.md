@@ -1,25 +1,25 @@
-# Liquidity engine
+# Liquidity Engine
 
-The Phase 1B liquidity engine derives auditable hypotheses from candles already stored in PostgreSQL/TimescaleDB. Liquidity does not mean a guaranteed institutional order, and a liquidity sweep does not guarantee reversal.
+Liquidity Engine Phase 1B suy ra các giả thuyết có thể kiểm toán từ candle đã lưu trong PostgreSQL/TimescaleDB. Thanh khoản không đồng nghĩa chắc chắn có lệnh tổ chức, và liquidity sweep không đảm bảo đảo chiều.
 
-## Levels
+## Các mức
 
-The engine emits `LIQUIDITY_LEVEL` events for:
+Engine phát sự kiện `LIQUIDITY_LEVEL` cho:
 
-- confirmed swing highs and lows;
-- tolerance-based equal highs and lows;
-- previous-day high and low, available only at the first observed candle of the next UTC day;
-- current running session high and low;
-- previous completed session high and low.
+- swing high và swing low đã xác nhận;
+- equal high và equal low theo tolerance;
+- high và low của ngày trước, chỉ khả dụng tại candle quan sát đầu tiên của ngày UTC tiếp theo;
+- high và low đang chạy của session hiện tại;
+- high và low của session đã hoàn tất trước đó.
 
-Sessions are configurable and calculated in the configured IANA timezone while persisted timestamps remain UTC. Default windows are Asia 00:00–09:00, London 07:00–16:00, and New York 13:00–22:00 UTC. London/New York concurrency is labeled `LONDON_NEW_YORK_OVERLAP` (`OVERLAP` remains a compatible enum alias).
+Session có thể cấu hình và được tính theo timezone IANA đã chọn, trong khi timestamp lưu trữ vẫn là UTC. Cửa sổ mặc định: Asia 00:00–09:00, London 07:00–16:00 và New York 13:00–22:00 UTC. Thời gian London/New York đồng thời được gắn `LONDON_NEW_YORK_OVERLAP`; `OVERLAP` vẫn là enum alias tương thích.
 
-## Sweeps
+## Sweep
 
-A bearish sweep requires a previously known high level, a wick above it, a close back below it, and a configurable minimum rejection ratio. A bullish sweep applies the inverse conditions to a known low. Metadata includes level, penetration, rejection, rejection ratio, `close_back_inside`, level-known time, and age in bars. A wick away from a known level is not a sweep.
+Bearish sweep yêu cầu một mức high đã biết từ trước, wick vượt lên trên, close quay xuống dưới mức đó và đạt rejection ratio tối thiểu có thể cấu hình. Bullish sweep áp dụng điều kiện ngược lại cho mức low đã biết. Metadata gồm level, penetration, rejection, rejection ratio, `close_back_inside`, thời điểm level được biết và tuổi theo số bar. Wick nằm xa một level đã biết không phải sweep.
 
-## Strength
+## Độ mạnh
 
-The 0–100 score is deterministic. Its bounded components are normalized distance, touch count, age, timeframe weight, equal-level status, swing strength, and session relevance. It is feature engineering only; no model is fitted and no synthetic AI training data is created.
+Điểm 0–100 mang tính xác định. Các thành phần có giới hạn gồm khoảng cách chuẩn hóa, số lần chạm, tuổi, trọng số timeframe, equal-level, swing strength và session relevance. Đây chỉ là feature engineering; không fit model và không tạo dữ liệu training AI tổng hợp.
 
-SMC/ICT terminology in ALM represents testable market hypotheses, not established facts about market-maker behavior.
+Thuật ngữ SMC/ICT trong ALM đại diện cho giả thuyết thị trường có thể kiểm thử, không phải sự thật đã được chứng minh về hành vi market maker.

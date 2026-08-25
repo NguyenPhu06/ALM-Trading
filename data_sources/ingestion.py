@@ -91,6 +91,15 @@ class MarketDataIngestionService:
             start = start.replace(tzinfo=timezone.utc)
         return self.import_historical(symbol, timeframe, start, end)
 
+    def continuous_poll(self, symbol: str, timeframe: str, *, interval_seconds: float=60,
+                        max_cycles: int | None=None, sleeper=time.sleep) -> list[IngestionReport]:
+        """Polling có giới hạn cho service/worker; provider tự xử lý retry/rate limit."""
+        reports=[];cycles=0
+        while max_cycles is None or cycles<max_cycles:
+            reports.append(self.update_incremental(symbol,timeframe));cycles+=1
+            if max_cycles is None or cycles<max_cycles:sleeper(interval_seconds)
+        return reports
+
     def _record(self, report: IngestionReport, request_started: datetime, error: str | None) -> None:
         self.session.add(MarketDataIngestion(
             provider=report.provider, symbol=report.symbol, timeframe=report.timeframe,

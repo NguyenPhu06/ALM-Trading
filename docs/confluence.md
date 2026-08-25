@@ -1,7 +1,7 @@
-# Bias, confluence, and NO_TRADE
+# Thiên hướng, hợp lưu và NO_TRADE
 
-Bias is structure-first and hierarchical. Default normalized weights are D1 0.35, H4 0.25, H1 0.20, M15 0.10, M5 0.06, and M1 0.04. Within each timeframe, confirmed trend contributes 80% of its weight and the latest BOS/CHoCH contributes up to 20%. The weighted score maps to strong bullish, bullish, neutral, bearish, or strong bearish. Lower timeframes therefore cannot blindly override aligned D1/H4/H1 structure.
+Thiên hướng ưu tiên cấu trúc và tuân theo phân cấp khung thời gian. Trọng số chuẩn hóa mặc định là D1 0,35; H4 0,25; H1 0,20; M15 0,10; M5 0,06 và M1 0,04. Trong mỗi khung thời gian, xu hướng đã xác nhận đóng góp 80% trọng số và BOS/CHoCH gần nhất đóng góp tối đa 20%. Điểm có trọng số được ánh xạ thành tăng mạnh, tăng, trung lập, giảm hoặc giảm mạnh. Vì vậy, khung thời gian thấp không thể tùy ý ghi đè cấu trúc D1/H4/H1 đang đồng thuận.
 
-`ConfluenceScore` is bounded 0–10 for explanation and ranking. It is not a probability. Components include hierarchical structure magnitude and deterministic trend confirmation. Reasons list aligned structure, BOS, sweeps, and ADX context; conflicts list timeframe states opposed to the hierarchical bias.
+`ConfluenceScore` được giới hạn từ 0 đến 10 để giải thích và xếp hạng; đây không phải xác suất. Các thành phần gồm độ lớn cấu trúc phân cấp và xác nhận xu hướng theo quy tắc xác định. Danh sách lý do ghi nhận cấu trúc đồng thuận, BOS, sweep và ngữ cảnh ADX; danh sách xung đột ghi nhận các trạng thái khung thời gian đối lập với thiên hướng phân cấp.
 
-The output becomes `NO_TRADE` when any configured safety condition applies, including insufficient timeframe data, conflicting D1/H4 structure, extreme volatility, unclear structure, missing liquidity context, unsuitable session, abnormal real spread, or lack of structural/price-action confirmation. Otherwise the state is `OBSERVE`, never BUY or SELL.
+Đầu ra trở thành `NO_TRADE` khi có bất kỳ điều kiện an toàn nào được cấu hình, gồm thiếu dữ liệu khung thời gian, cấu trúc D1/H4 xung đột, biến động cực đoan, cấu trúc không rõ, thiếu ngữ cảnh thanh khoản, phiên không phù hợp, spread thực bất thường hoặc thiếu xác nhận cấu trúc/price action. Nếu không, trạng thái là `OBSERVE`, không bao giờ là `BUY` hay `SELL`.

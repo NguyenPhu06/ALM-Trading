@@ -11,7 +11,24 @@ PAYLOAD = {
 
 def test_health_and_paginated_endpoints(client):
     health = client.get("/health")
-    assert health.status_code == 200 and health.json()["status"] == "ok"
+    assert health.status_code == 200 and health.json() == {"status": "ok", "phase": "7"}
+
+
+def test_phase7_market_gateway_endpoints_are_read_only(client):
+    endpoints=("/market/providers/status","/market/data-quality/EURUSD","/market/snapshot/EURUSD","/market/calendar","/market/cot/EURO%20FX","/intelligence/snapshot/EURUSD")
+    for endpoint in endpoints:
+        assert client.get(endpoint).status_code==200
+        assert client.post(endpoint).status_code==405
+
+
+def test_phase6_strategy_endpoints_are_read_only_and_empty_by_default(client):
+    endpoints = (
+        "/strategy/setup/latest", "/strategy/snapshot/EURUSD",
+        "/strategy/decision/latest", "/strategy/backtest/latest", "/strategy/performance",
+    )
+    for endpoint in endpoints:
+        assert client.get(endpoint).status_code == 404
+        assert client.post(endpoint).status_code == 405
     for path in ("/api/candles", "/api/cot", "/api/tradingview/alerts"):
         response = client.get(path, params={"limit": 2, "offset": 0})
         assert response.status_code == 200
@@ -42,4 +59,3 @@ def test_webhook_rejects_unsupported_event(client):
     payload = {**PAYLOAD, "event": "UNKNOWN"}
     headers = {"X-TradingView-Secret": get_settings().tradingview_webhook_secret}
     assert client.post("/webhooks/tradingview", json=payload, headers=headers).status_code == 422
-

@@ -1,33 +1,33 @@
-# Market structure engine
+# Market Structure Engine
 
-Phase 1B treats market structure as deterministic feature engineering, not as a prediction or a statement of certainty.
+Phase 1B xem market structure là feature engineering xác định, không phải dự đoán hay tuyên bố chắc chắn.
 
-## Causal swing confirmation
+## Xác nhận swing nhân quả
 
-`SwingDetector` uses configurable left/right fractal bars, minimum bar distance, and minimum price move. The Phase 1B pipeline retains its fixed two right bars; Phase 3 reads its own configuration. A candidate at candle `i` is not confirmed until candle `i + right_bars` has closed. Unconfirmed candidates are explicitly marked and never enter structure calculations. `confirmation_timestamp` is the confirming candle's close time.
+`SwingDetector` dùng số fractal bar trái/phải, khoảng cách bar tối thiểu và mức dịch chuyển giá tối thiểu có thể cấu hình. Pipeline Phase 1B giữ cố định hai right bar; Phase 3 đọc cấu hình riêng. Ứng viên tại candle `i` chỉ được xác nhận sau khi candle `i + right_bars` đóng. Ứng viên chưa xác nhận được đánh dấu rõ và không đi vào phép tính structure. `confirmation_timestamp` là thời điểm đóng của candle xác nhận.
 
-Confirmed highs are classified against the previous confirmed high as `HH` or `LH`. Confirmed lows are classified as `HL` or `LL`. Equal levels use `equal_level_tolerance_points * point_size`; exact floating-point equality is not required.
+High đã xác nhận được phân loại so với high xác nhận trước là `HH` hoặc `LH`. Low đã xác nhận được phân loại là `HL` hoặc `LL`. Equal level dùng `equal_level_tolerance_points * point_size`; không yêu cầu số thực bằng nhau tuyệt đối.
 
-## BOS and CHoCH
+## BOS và CHoCH
 
-The default `CLOSE_BREAK` mode requires a candle close beyond the confirmed level. `WICK_BREAK` is available through configuration. Each level breaks once:
+Chế độ mặc định `CLOSE_BREAK` yêu cầu close vượt level đã xác nhận. `WICK_BREAK` có thể bật qua cấu hình. Mỗi level chỉ bị phá một lần:
 
-- a break in the active direction is BOS;
-- a break against bearish structure is bullish CHoCH;
-- a break against bullish structure is bearish CHoCH.
+- phá theo hướng cấu trúc đang hoạt động là BOS;
+- phá ngược cấu trúc bearish là bullish CHoCH;
+- phá ngược cấu trúc bullish là bearish CHoCH.
 
-CHoCH metadata records `previous_structure`, `broken_level`, `new_direction`, break mode, level confirmation time, and deterministic displacement. Unclosed and unconfirmed candles are excluded.
+Metadata CHoCH lưu `previous_structure`, `broken_level`, `new_direction`, break mode, thời điểm xác nhận level và displacement xác định. Candle chưa đóng và swing chưa xác nhận bị loại.
 
-## Higher timeframes
+## Khung thời gian lớn
 
-The causal resampler builds H1, H4, and D1 from complete closed M15 buckets in UTC. Open is first, high/low are extrema, close is last, and available volume is summed. Incomplete buckets are never passed into the HTF structure engine.
+Resampler nhân quả tạo H1, H4 và D1 từ bucket M15 UTC đã đóng hoàn chỉnh. Open lấy giá đầu, high/low lấy cực trị, close lấy giá cuối và volume khả dụng được cộng lại. Bucket thiếu không bao giờ được truyền vào HTF Structure Engine.
 
-## Bias and multi-timeframe use
+## Bias và sử dụng đa khung
 
-`StructureBias` ranges from `STRONG_BEARISH` to `STRONG_BULLISH`. The score uses only BOS, CHoCH, HH/HL, LH/LL, displacement, and timeframe weighting. No RSI, ADX, Ichimoku, or machine learning is included.
+`StructureBias` trải từ `STRONG_BEARISH` đến `STRONG_BULLISH`. Điểm chỉ dùng BOS, CHoCH, HH/HL, LH/LL, displacement và trọng số timeframe. Không dùng RSI, ADX, Ichimoku hay machine learning.
 
-The MTF analyzer keeps HTF bias separate from LTF structure. For example, bullish M15 activity can remain a retracement inside bearish D1/H4/H1 context; it does not relabel the whole market bullish.
+MTF Analyzer giữ HTF bias tách biệt LTF structure. Ví dụ, hoạt động bullish M15 có thể chỉ là retracement trong bối cảnh D1/H4/H1 bearish; nó không gắn lại toàn thị trường thành bullish.
 
-Market structure is a market hypothesis and does not provide prediction certainty.
+Market structure là một giả thuyết thị trường và không mang lại độ chắc chắn dự báo.
 
-Phase 3 also exposes `BULLISH` for a recent HH+HL sequence, `BEARISH` for LH+LL, `RANGING` for mixed confirmed classifications, and `UNKNOWN` when the structural sequence is insufficient. All six supported timeframes use the same configurable algorithm independently.
+Phase 3 cũng công bố `BULLISH` cho chuỗi HH+HL gần đây, `BEARISH` cho LH+LL, `RANGING` khi các phân loại xác nhận bị trộn và `UNKNOWN` khi chuỗi cấu trúc chưa đủ. Mọi timeframe được hỗ trợ chạy cùng thuật toán cấu hình một cách độc lập.

@@ -1,29 +1,29 @@
-# Multi-timeframe market regime
+# Market regime đa khung thời gian
 
-The regime layer does not treat M15 as the primary trend. Roles are fixed: D1 macro regime, H4 primary structural trend, H1 trading-direction confirmation, M15 liquidity/setup, M5 entry refinement, and M1 optional execution timing. Missing M5/M1 data is explicit and is never manufactured by downsampling.
+Lớp regime không coi M15 là xu hướng chính. Vai trò được cố định: D1 là macro regime, H4 là xu hướng cấu trúc chính, H1 xác nhận hướng giao dịch, M15 là ngữ cảnh liquidity/setup, M5 tinh chỉnh điểm vào và M1 là thời điểm execution tùy chọn. Dữ liệu M5/M1 thiếu được thể hiện rõ và không bao giờ được tạo bằng cách chia nhỏ timeframe lớn.
 
-## Structural matrix
+## Ma trận cấu trúc
 
-Every timeframe is processed independently through closed candles, delayed swing confirmation, structure, and liquidity. A directional trend requires a structural sequence:
+Mỗi timeframe được xử lý độc lập qua candle đã đóng, swing confirmation có độ trễ, structure và liquidity. Xu hướng có hướng yêu cầu chuỗi cấu trúc:
 
 - HH + HL + bullish BOS → bullish;
 - LH + LL + bearish BOS → bearish;
-- incomplete or conflicting evidence → neutral/transitional.
+- bằng chứng thiếu hoặc xung đột → neutral/transitional.
 
-A single candle, indicator, wick, or M15 CHoCH cannot define the regime. Trends range from `STRONGLY_BEARISH` to `STRONGLY_BULLISH` and include a normalized structural strength.
+Một candle, indicator, wick hoặc CHoCH M15 đơn lẻ không thể xác định regime. Xu hướng trải từ `STRONGLY_BEARISH` đến `STRONGLY_BULLISH` và có structural strength đã chuẩn hóa.
 
-## HTF and LTF separation
+## Tách HTF và LTF
 
-`HTF_BIAS` uses D1/H4/H1 only. `LTF_DIRECTION` uses M15/M5/M1. The configurable structure score defaults to D1 40%, H4 30%, H1 20%, and M15 10%, so lower-timeframe noise cannot dominate the score. Opposing LTF direction is labeled retracement or reversal evidence, never BUY/SELL.
+`HTF_BIAS` chỉ dùng D1/H4/H1. `LTF_DIRECTION` dùng M15/M5/M1. Điểm cấu trúc có cấu hình mặc định D1 40%, H4 30%, H1 20% và M15 10%, nên nhiễu khung thấp không thể chi phối điểm. Hướng LTF đối lập được gắn là retracement hoặc bằng chứng reversal, không bao giờ là `BUY`/`SELL`.
 
-Reversal confidence rises only through a causal sequence: known liquidity sweep, LTF CHoCH, M15 structural confirmation, H1 confirmation, then H4 confirmation. M15 alone remains low confidence.
+Reversal confidence chỉ tăng qua chuỗi nhân quả: liquidity sweep đã biết, LTF CHoCH, xác nhận cấu trúc M15, xác nhận H1 rồi xác nhận H4. Riêng M15 vẫn có confidence thấp.
 
-## Indicators and institutional inputs
+## Indicator và đầu vào tổ chức
 
-RSI, ADX, ATR, and Ichimoku are calculated independently per timeframe from that timeframe's closed candles. They provide confirmation/conflict metadata and never rewrite structural trend. Insufficient history is explicit.
+RSI, ADX, ATR và Ichimoku được tính độc lập theo candle đã đóng của từng timeframe. Chúng cung cấp metadata xác nhận/xung đột và không bao giờ viết lại xu hướng cấu trúc. Thiếu lịch sử được thể hiện rõ.
 
-Institutional inputs are optional and timestamped. ALM can consume stored institutional-pressure components or mapped CFTC COT data. Bank participation and CME fields remain unavailable unless real source data exists. Missing values are not synthesized.
+Đầu vào tổ chức là tùy chọn và có timestamp. ALM có thể dùng thành phần institutional-pressure đã lưu hoặc dữ liệu CFTC COT đã ánh xạ. Các trường bank participation và CME vẫn không khả dụng nếu chưa có nguồn thật. Giá trị thiếu không được tổng hợp giả.
 
-## Strategy boundary
+## Ranh giới strategy
 
-Strategies receive `MarketRegimeSnapshot`, not raw candles, for regime decisions. The snapshot contains HTF/LTF direction, market state, reversal confidence, weighted score, liquidity map, isolated indicators, timeframe alignment, and conflicts. `signal` is always null in this phase; the regime engine does not place or recommend trades.
+Strategy nhận `MarketRegimeSnapshot`, không nhận raw candle, để quyết định regime. Snapshot chứa hướng HTF/LTF, trạng thái thị trường, reversal confidence, điểm có trọng số, liquidity map, indicator độc lập, alignment timeframe và xung đột. `signal` luôn là `null` trong phase này; Regime Engine không đặt hoặc khuyến nghị giao dịch.

@@ -1,16 +1,15 @@
-# Future feature and neural-network compatibility
+# Tương thích feature tương lai và Neural Network
 
-No model is trained and no random or synthetic feature values are generated in Phase 1A.
+Phase 1A không train model và không tạo giá trị feature ngẫu nhiên hoặc tổng hợp.
 
-The intended feature vector groups are:
+Các nhóm feature dự kiến:
 
-- PRICE: returns, ranges, and candle context from `market_candles`.
-- LIQUIDITY: derived, timestamped liquidity events.
-- STRUCTURE: HH/HL/LH/LL/BOS/CHoCH state known at observation time.
-- ICHIMOKU, RSI, ADX, ATR: values written by a future indicator engine.
-- TIME: UTC/calendar/session features derived without future information.
-- COT: periodic institutional positioning joined only after its publication availability time.
-- INSTITUTIONAL PRESSURE: nullable derived estimate with confidence and source metadata.
+- PRICE: return, range và ngữ cảnh candle từ `market_candles`.
+- LIQUIDITY: sự kiện thanh khoản có timestamp do hệ thống suy ra.
+- STRUCTURE: trạng thái HH/HL/LH/LL/BOS/CHoCH đã biết tại thời điểm quan sát.
+- ICHIMOKU, RSI, ADX, ATR: giá trị do Indicator Engine ghi.
+- TIME: feature UTC/lịch/session được suy ra mà không dùng dữ liệu tương lai.
+- COT: vị thế tổ chức định kỳ, chỉ join sau thời điểm công bố khả dụng.
+- INSTITUTIONAL PRESSURE: ước lượng có thể `NULL`, kèm confidence và metadata nguồn.
 
-Future pipeline: database → feature extraction → feature dataset → labeling → train → validation → test → walk-forward evaluation → model prediction. Dataset builders must use point-in-time joins, record data availability (not merely report dates), keep validation/test periods chronologically separate, and prevent look-ahead leakage. `strategy_signals` and `trading_outcomes` provide future signal/label persistence interfaces; neither triggers execution.
-
+Pipeline tương lai: database → feature extraction → feature dataset → labeling → train → validation → test → walk-forward evaluation → model prediction. Dataset Builder phải dùng point-in-time join, ghi thời điểm dữ liệu thực sự khả dụng thay vì chỉ ngày báo cáo, giữ validation/test tách biệt theo thời gian và ngăn look-ahead leakage. `strategy_signals` và `trading_outcomes` cung cấp interface lưu signal/label tương lai; cả hai đều không kích hoạt execution.

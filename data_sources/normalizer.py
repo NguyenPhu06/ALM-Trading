@@ -97,3 +97,13 @@ class CandleNormalizer:
         }
         self.validator.validate_candle(candle)
         return candle
+
+
+class QuoteNormalizer:
+    def normalize(self, raw: dict[str, Any], *, source: str) -> dict[str, Any]:
+        bid=normalize_decimal(raw.get("bid"),"bid",optional=True);ask=normalize_decimal(raw.get("ask"),"ask",optional=True)
+        if bid is None and ask is None: raise DataValidationError("quote requires bid or ask")
+        if bid is not None and ask is not None and ask < bid: raise DataValidationError("ask must not be below bid")
+        mid=(bid+ask)/2 if bid is not None and ask is not None else bid if bid is not None else ask
+        spread=ask-bid if bid is not None and ask is not None else None
+        return {"timestamp":normalize_timestamp(raw.get("timestamp")),"symbol":normalize_symbol(raw.get("symbol")),"bid":bid,"ask":ask,"mid_price":mid,"spread":spread,"spread_percent":spread/mid if spread is not None and mid else None,"bid_volume":normalize_decimal(raw.get("bid_volume"),"bid_volume",optional=True),"ask_volume":normalize_decimal(raw.get("ask_volume"),"ask_volume",optional=True),"tick_volume":normalize_decimal(raw.get("tick_volume"),"tick_volume",optional=True),"source":source}

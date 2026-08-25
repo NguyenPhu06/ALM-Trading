@@ -44,6 +44,20 @@ class LiquidityEventData:
     calculation_version: str = "phase3.v1"
 
 
+@dataclass(frozen=True, slots=True)
+class LiquidityMapEntry:
+    price: Decimal
+    type: str
+    timeframe: str
+    strength: float
+    created_at: datetime
+    swept: bool
+    swept_at: datetime | None
+    side: str
+    symbol: str
+    calculation_version: str = "phase3.v1"
+
+
 class LiquidityEngine:
     TIMEFRAME_WEIGHT = {"M1": 5, "M5": 8, "M15": 12, "M30": 15, "H1": 20, "H4": 28, "D1": 35, "W1": 40, "MN1": 45}
 
@@ -223,6 +237,29 @@ class LiquidityEngine:
                 ))
                 last_by_key[key] = price
         return sorted(levels, key=lambda item: item.event_timestamp)
+
+    def liquidity_map(self, candles: Sequence[Any], *, as_of_index: int | None = None) -> list[LiquidityMapEntry]:
+        visible = closed_candle_prefix(candles, as_of_index=as_of_index)
+        return self.map_from_events(self.calculate(visible))
+
+    @staticmethod
+    def map_from_events(events: Sequence[LiquidityEventData]) -> list[LiquidityMapEntry]:
+        levels = [event for event in events if event.event_type == "LIQUIDITY_LEVEL"]
+        sweeps = [event for event in events if event.event_type == "LIQUIDITY_SWEEP"]
+        output = []
+        for level in levels:
+            sweep = next((
+                event for event in sweeps
+                if event.event_timestamp > level.event_timestamp
+                and event.metadata.get("level_type") == level.metadata.get("level_type")
+                and Decimal(str(event.metadata.get("liquidity_level"))) == level.price
+            ), None)
+            output.append(LiquidityMapEntry(
+                level.price, str(level.metadata.get("level_type")), level.timeframe, float(level.strength or 0),
+                level.event_timestamp, sweep is not None, sweep.event_timestamp if sweep else None,
+                str(level.direction), level.symbol,
+            ))
+        return output
 
     def _append_pool(
         self, levels: list[LiquidityLevel], cluster: list[Any], side: str,

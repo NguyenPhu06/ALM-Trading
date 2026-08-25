@@ -1,13 +1,14 @@
-# Controlled resampling
+# Resampling có kiểm soát
 
-Provider-native timeframes are preferred. Resampling is a fallback for a missing native timeframe and is limited to:
+Ưu tiên timeframe native của provider. Resampling chỉ là phương án dự phòng khi thiếu timeframe native và được giới hạn ở:
 
-- M1 to M5
-- M5 to M15
-- M15 to H1
-- H1 to H4
-- H4 to D1
+- M1 sang M5;
+- M5 sang M15;
+- M15 sang M30;
+- M15 sang H1;
+- H1 sang H4;
+- H4 sang D1.
 
-Buckets are UTC aligned and require every expected closed source candle. Open, high, low, close, and volume use first, maximum, minimum, last, and sum respectively. Incomplete or gapped buckets are omitted, not filled. Derived records retain `source_timeframe`, `target_timeframe`, and `UTC_COMPLETE_BUCKET_OHLCV_V1`.
+Bucket được căn theo UTC và yêu cầu đủ mọi source candle đã đóng theo kỳ vọng. Open, high, low, close và volume lần lượt dùng giá đầu, cực đại, cực tiểu, giá cuối và tổng. Bucket thiếu hoặc có gap bị bỏ, không được lấp. Bản ghi suy ra giữ `source_timeframe`, `target_timeframe` và `UTC_COMPLETE_BUCKET_OHLCV_V1`.
 
-An H1 bucket beginning 10:00 becomes observable only at 11:00. At 10:15 it is excluded even if some M15 components already exist. No later candle is used to construct or expose an earlier decision.
+Bucket H1 bắt đầu lúc 10:00 chỉ quan sát được từ 11:00. Tại 10:15 nó bị loại dù một số thành phần M15 đã tồn tại. Không candle về sau nào được dùng để tạo hoặc công bố quyết định sớm hơn.

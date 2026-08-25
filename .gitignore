@@ -12,5 +12,9 @@ logs/*
 postgres_data/
 *.db
 *.sqlite*
+data/ml/
+data/models/
+data/experiments/
+*.parquet
 .idea/
 .vscode/

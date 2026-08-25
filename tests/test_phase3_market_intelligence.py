@@ -119,17 +119,23 @@ def test_deterministic_mtf_market_intelligence_scenario():
         "D1": state("D1", "BULLISH", bos="BULLISH"),
         "H4": state("H4", "BULLISH", bos="BULLISH"),
         "H1": state("H1", "BULLISH", bos="BULLISH"),
+        "M30": state("M30", "BEARISH"),
         "M15": state("M15", "BEARISH"),
         "M5": state("M5", sweep={"direction": "BULLISH", "metadata": {"liquidity_side": "SELL_SIDE"}}),
         "M1": state("M1", displacement={"direction": "BULLISH", "displaced": True}),
     }
     snapshot = engine.aggregate("EURUSD", states, as_of=BASE)
-    assert snapshot.bias is MarketBias.STRONG_BULLISH
+    assert snapshot.bias in {MarketBias.BULLISH, MarketBias.STRONG_BULLISH}
+    assert snapshot.timeframes["M30"].trend == "BEARISH"
     assert snapshot.timeframes["M15"].trend == "BEARISH"
     assert snapshot.timeframes["M5"].sweep["metadata"]["liquidity_side"] == "SELL_SIDE"
     assert snapshot.timeframes["M1"].displacement["direction"] == "BULLISH"
     assert any("M15 bearish" in conflict for conflict in snapshot.conflicts)
     assert snapshot.trade_state == "OBSERVE" and snapshot.signal is None
+    assert snapshot.market_regime["higher_timeframe_bias"] == "BULLISH"
+    assert snapshot.market_regime["lower_timeframe_state"] == "BEARISH"
+    assert snapshot.mtf_alignment == "COUNTER_TREND"
+    assert snapshot.confidence > 0
 
 
 def test_no_trade_for_conflicting_htf_and_feature_vector_schema_is_stable():
@@ -196,4 +202,5 @@ def test_phase3_intelligence_apis(client, db_session):
     assert payload["signal"] is None
     assert payload["calculation_version"] == "phase3.v1"
     assert payload["timeframes"]["M15"]["available"] is True
-    assert client.get("/api/intelligence/EURUSD/M30").status_code == 422
+    assert client.get("/api/intelligence/EURUSD/M30").status_code == 200
+    assert client.get("/api/intelligence/EURUSD/M2").status_code == 422

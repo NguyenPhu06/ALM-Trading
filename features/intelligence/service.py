@@ -37,7 +37,7 @@ class MarketIntelligenceService:
         if as_of is None:
             close_times = [candle_close_time(rows[-1]) for rows in native.values() if rows]
             as_of = max(close_times) if close_times else datetime.now(timezone.utc)
-        for source, target in (("M1", "M5"), ("M5", "M15"), ("M15", "H1"), ("H1", "H4"), ("H4", "D1")):
+        for source, target in (("M1", "M5"), ("M5", "M15"), ("M15", "M30"), ("M15", "H1"), ("H1", "H4"), ("H4", "D1")):
             if not native[target] and native[source]:
                 native[target] = self.resampler.resample(native[source], source, target, as_of=as_of)
         return self.engine.calculate(symbol, native, as_of=as_of)

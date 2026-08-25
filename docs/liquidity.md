@@ -1,9 +1,9 @@
-# Phase 3 liquidity features
+# Feature thanh khoản Phase 3
 
-Liquidity levels are measurable price references, not proof of institutional orders. The engine exposes confirmed swing highs/lows, equal highs/lows, previous day/week/month extremes, running current-session extremes, previous-session extremes, and clustered liquidity pools.
+Mức thanh khoản là mốc giá có thể đo lường, không phải bằng chứng về lệnh của tổ chức. Engine công bố swing high/low đã xác nhận, equal high/low, cực trị ngày/tuần/tháng trước, cực trị đang chạy của session hiện tại, cực trị session trước và cụm liquidity pool.
 
-Two confirmed same-side swings belong to a pool when each consecutive price difference is at most `equal_level_tolerance_points × point_size`. A high cluster is labeled buy-side liquidity; a low cluster is sell-side liquidity. Pool strength is a bounded deterministic function of distance, touches, age, timeframe, equality, swing prominence, and session relevance.
+Hai swing cùng phía đã xác nhận thuộc một pool khi mỗi chênh lệch giá liên tiếp không vượt `equal_level_tolerance_points × point_size`. Cụm high được gọi là buy-side liquidity; cụm low là sell-side liquidity. Độ mạnh pool là hàm xác định có giới hạn dựa trên khoảng cách, số lần chạm, tuổi, timeframe, tính bằng nhau, độ nổi bật swing và mức liên quan session.
 
-A high-side sweep requires `high > level`, `close < level`, and upper-wick rejection divided by candle range greater than the configured minimum. It is a bearish rejection of buy-side liquidity. A low-side sweep symmetrically requires `low < level`, `close > level`, and sufficient lower-wick rejection. Each event records penetration, rejection, rejection ratio, level-known timestamp, direction, timeframe, and strength.
+Sweep phía high yêu cầu `high > level`, `close < level` và tỷ lệ từ chối của râu trên so với range candle lớn hơn ngưỡng cấu hình. Đây là từ chối giảm tại buy-side liquidity. Sweep phía low đối xứng yêu cầu `low < level`, `close > level` và râu dưới đủ mạnh. Mỗi sự kiện lưu penetration, rejection, rejection ratio, timestamp mức trở nên khả dụng, hướng, timeframe và strength.
 
-A wick alone is not a sweep. Levels become active only at their causal confirmation timestamp, and later filling/rejection cannot be written into an earlier snapshot.
+Một wick đơn lẻ không phải sweep. Level chỉ hoạt động từ timestamp xác nhận nhân quả; việc fill hoặc rejection về sau không thể được ghi ngược vào snapshot trước đó.

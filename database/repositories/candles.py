@@ -114,10 +114,13 @@ class CandleRepository:
     def chronological(
         self, *, symbol: str, timeframe: str,
         start: datetime | None = None, end: datetime | None = None,
-        source: str | None = None, closed_only: bool = False,
+        source: str | None = None, exclude_sources: tuple[str, ...] = (), closed_only: bool = False,
         limit: int | None = None,
     ) -> list[MarketCandle]:
-        query = self._filtered(symbol=symbol, timeframe=timeframe, start=start, end=end, source=source, closed_only=closed_only)
+        query = self._filtered(
+            symbol=symbol, timeframe=timeframe, start=start, end=end, source=source,
+            exclude_sources=exclude_sources, closed_only=closed_only,
+        )
         query = query.order_by(MarketCandle.timestamp.asc())
         if limit is not None:
             query = query.limit(limit)

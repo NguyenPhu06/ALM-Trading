@@ -7,3 +7,8 @@ __all__ = [
     "BaseMarketDataProvider", "HistoricalFXProvider", "ProviderHealth",
     "MT5MarketDataProvider", "ProviderStatus", "create_provider",
 ]
+from data_sources.providers.base import BaseMarketDataProvider, ProviderHealth, ProviderStatus
+from data_sources.providers.gateway import MockMarketDataProvider, TradingViewAdapter
+
+MarketDataProvider = BaseMarketDataProvider
+__all__=["BaseMarketDataProvider","MarketDataProvider","MockMarketDataProvider","ProviderHealth","ProviderStatus","TradingViewAdapter"]
