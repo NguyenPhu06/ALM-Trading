@@ -1,5 +1,45 @@
 # ALM-Trading
 
+## Phase 11 — MT5 DEMO Execution Foundation
+
+Phase 11 xây **nền tảng execution** cho MT5 DEMO và **một manual test**. Không có automated trading, không có strategy auto execution, không có live trading.
+
+Một lệnh chỉ đi được khi **cả ba cổng** đều mở, và cả ba đều **đóng theo mặc định**: `DEMO_TRADING_ENABLED=false`, `MT5_EXECUTION_ENABLED=false`, `EXECUTION_KILL_SWITCH=true`. `LIVE_TRADING_ENABLED` vẫn raise ngay khi khởi động nếu bật. Account `REAL` bị chặn hai lần — ở `ExecutionGuard` và một lần nữa ngay trước khi truyền.
+
+`ExecutionGuard` là cổng bắt buộc: `MT5ExecutionClient` từ chối truyền nếu không có `GuardDecision` khớp `request_id`, nên bỏ qua guard **không hoạt động**. Mọi lệnh — kể cả bị từ chối — được audit đủ 6 stage và đối soát với position thật.
+
+Strategy Engine vẫn dừng ở **PAPER**; nó không có đường nào tới MT5 execution.
+
+Tài liệu: [DEMO execution](docs/demo_execution.md), [execution guard](docs/execution_guard.md), [kill switch](docs/kill_switch.md), [reconciliation](docs/reconciliation.md).
+
+## Phase 10 — MT5 Exness Read-Only Integration
+
+Phase 10 kết nối MetaTrader 5 (Exness, tài khoản **DEMO**) làm **DATA PROVIDER**: account, symbol, tick, candle D1→M5, spread, positions, orders và history. MT5 **không phải** execution provider — không gửi lệnh, không sửa lệnh, không đóng position, không DCA thật, không SL/TP thật.
+
+Safety lock bắt buộc: `TRADING_ENVIRONMENT=DEMO`, `MT5_READ_ONLY=true`, `MT5_EXECUTION_ENABLED=false`, `LIVE_TRADING_ENABLED=false`, `DEMO_TRADING_ENABLED=false`, `READ_ONLY_MODE=true`. Sai cấu hình → `BLOCK_CONNECTION` / `BLOCK_DATA_ACCESS`. Tài khoản `REAL` bị chặn và ngắt kết nối ngay.
+
+Credentials (`MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER`) chỉ nằm trong `.env`, không vào source/log/database/API. Login luôn hiển thị dạng mask.
+
+Package `MetaTrader5` chỉ chạy trên Windows cùng máy với terminal; khi thiếu, hệ thống báo `MT5_TERMINAL_NOT_AVAILABLE` và **không sập**.
+
+Tài liệu: [MT5 read-only](docs/mt5_readonly.md), [data pipeline](docs/mt5_data_pipeline.md), [Windows bridge](docs/mt5_windows_bridge.md), [security](docs/mt5_security.md).
+
+## Phase 9 — Trading Command Center
+
+Phase 9 thêm React/TypeScript/Vite dashboard quan sát MTF, liquidity, indicators, NN, strategy/risk explanation, paper positions/DCA, journal, equity/performance, system health và alerts. Dashboard chỉ hiển thị backend decisions; không có MT5, Exness, broker hoặc execution control. `LIVE_TRADING_ENABLED=false`, `DEMO_TRADING_ENABLED=false`.
+
+Phase 9 cũng thêm vòng lặp orchestration nhỏ nhất để hệ thống chạy end-to-end: provider → validation → snapshot → intelligence → AI (tùy chọn) → strategy → risk → paper → persistence → alerts → dashboard. Vòng lặp là **opt-in** (`phase_9.orchestration.enabled: false`); khởi động API không tự khởi động hoạt động giao dịch. Khi chưa có model đã train, hệ thống giữ nguyên hành vi `MODEL_UNAVAILABLE` và không vào lệnh.
+
+Mở dashboard tại `http://localhost:3000` sau `docker compose up -d --build`. Chạy một tick thủ công: `python -m scripts.run_orchestrator --once`.
+
+Tài liệu: [dashboard](docs/dashboard.md), [orchestration](docs/orchestration.md), [monitoring](docs/monitoring.md), [alerting](docs/alerting.md), [trade explainability](docs/trade_explainability.md).
+
+## Phase 8 — Paper Trading Engine
+
+Phase 8 thêm account/position/order thuần mô phỏng, execution costs, sizing, risk/daily-loss gate, kill switch, DCA/time exit, causal replay, journal và performance dashboard. `PAPER_TRADING_ENABLED=true`, `LIVE_TRADING_ENABLED=false`; không có broker live-order route.
+
+Tài liệu: [paper trading](docs/paper_trading.md), [risk](docs/paper_risk_management.md), [execution](docs/paper_execution.md), [replay](docs/paper_replay.md), [journal](docs/trade_journal.md).
+
 ## Phase 7 — Real Market Data Gateway
 
 Phase 7 thêm gateway dữ liệu thị trường thật/near-real-time, provider health, cache TTL, quality gate, snapshot đa khung, COT context, calendar/news-risk contracts và paper execution thuần mô phỏng. TradingView không bị scrape; dữ liệu tổ chức không được bịa. `LIVE_TRADING_ENABLED=false`.
@@ -49,6 +89,7 @@ Useful commands:
 
 ```text
 python -m pytest -q
+pip install MetaTrader5      # Windows only, for the Phase 10 live integration
 docker compose config
 python -m scripts.update_cot
 python -m scripts.test_tradingview_webhook

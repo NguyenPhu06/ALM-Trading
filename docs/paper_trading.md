@@ -1,6 +1,5 @@
-# Paper trading Phase 7
+# Paper trading Phase 8
 
-`PaperExecutionProvider` chỉ mô phỏng trong bộ nhớ với submit/modify/close/get positions. `PaperOrder` lưu ID, symbol, direction, entry, size, stop, take profit, timestamp, strategy version và model version.
+Paper service quản lý account, equity, positions, order, DCA, exit và journal trong môi trường `PAPER`. Entry chỉ được phép khi setup là `EXECUTABLE_SIMULATION`, risk cho phép, quality `VALID`, provider online và prediction hợp lệ.
 
-Không có broker transport, tài khoản giao dịch hay endpoint đặt lệnh. `LIVE_TRADING_ENABLED=false` là invariant bắt buộc.
-
+Các control endpoint start/pause/stop/close-position chỉ tác động tới mô phỏng. Không có broker transport, trading credential hay `/live/order`. `LIVE_TRADING_ENABLED=false` và `PAPER_TRADING_ENABLED=true` là invariant bắt buộc.

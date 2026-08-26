@@ -12,3 +12,5 @@ PyYAML>=6.0,<7
 python-dotenv>=1.0,<2
 httpx>=0.28,<1
 pytest>=8.3,<10
+# Phase 10: Windows-only wheel. The API degrades to MT5_TERMINAL_NOT_AVAILABLE elsewhere.
+MetaTrader5>=5.0.45,<6; sys_platform == "win32"

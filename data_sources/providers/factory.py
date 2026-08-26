@@ -17,4 +17,9 @@ def create_provider(name: str | None = None, *, settings: Settings | None = None
             max_retries=settings.market_data_max_retries,
             backoff_seconds=settings.market_data_backoff_seconds,
         )
+    if provider in {"mt5", "metatrader5", "metatrader"}:
+        # Read-only adapter. Importing lazily keeps the MetaTrader5 dependency optional.
+        from data_sources.providers.mt5 import MT5MarketDataProvider
+
+        return MT5MarketDataProvider()
     raise ValueError(f"unknown market data provider: {provider}")

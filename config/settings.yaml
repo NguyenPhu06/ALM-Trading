@@ -161,3 +161,74 @@ phase_7:
   polling_interval_seconds: 60
   high_impact_news_filter: true
   snapshot_timeframes: [D1, H4, H1, M30, M15, M5]
+
+phase_8:
+  initial_balance: 1000
+  environment: PAPER
+  fallback_spread: 0.0001
+  fixed_slippage: 0.00002
+  percentage_slippage: 0
+  volatility_slippage_multiplier: 0.05
+  commission_per_trade: 0
+  commission_percentage: 0
+  max_position_size: 10
+  max_notional: 100000
+  max_account_risk: 0.02
+  max_dca_entries: 3
+  dca_spacing: 0.001
+  dca_size_multiplier: 1.0
+  max_total_exposure: 100000
+  max_drawdown: 0.20
+  daily_loss_limit: 0.03
+  max_concurrent_positions: 3
+
+phase_9:
+  dashboard_max_age_seconds: 300
+  poll_interval_seconds: 10
+  orchestration:
+    # Disabled by default. The loop only ever reaches the paper engine, but it is
+    # opt-in so that starting the API never starts trading activity on its own.
+    enabled: false
+    symbols: [EURUSD]
+    interval_seconds: 60
+    fixed_position_size: 0.1
+    model_version: null
+    model_registry_path: data/models
+    restore_paper_state_on_start: true
+
+phase_10:
+  broker: Exness
+  environment: DEMO
+  timeframes: [D1, H4, H1, M30, M15, M5]
+  default_candle_count: 500
+  # Canonical names only. Broker suffixes/prefixes are discovered, never hardcoded.
+  canonical_symbols: [EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, USDCAD, NZDUSD, XAUUSD]
+  tick_stale_seconds: 30
+  candle_stale_multiplier: 3
+  spread:
+    average_window: 50
+    elevated_ratio: 1.5
+    extreme_ratio: 3.0
+  source_comparison:
+    price_tolerance: 0.0010
+    timestamp_tolerance_seconds: 120
+
+phase_11:
+  environment: DEMO
+  # Server names that identify a DEMO account. A server matching none of these
+  # blocks execution even when every flag is open.
+  demo_server_patterns: [demo, trial, practice, test]
+  max_volume: 0.10
+  min_volume: 0.01
+  volume_step: 0.01
+  max_open_positions: 3
+  max_dca_entries: 3
+  max_spread: 0.0005
+  max_daily_drawdown: 0.03
+  max_exposure: 10000
+  min_stop_distance: 0.0005
+  allowed_sessions: [ASIA, LONDON, NEW_YORK, LONDON_NEW_YORK_OVERLAP]
+  price_deviation_tolerance: 0.0020
+  reconciliation:
+    volume_tolerance: 0.0001
+    price_tolerance: 0.0010

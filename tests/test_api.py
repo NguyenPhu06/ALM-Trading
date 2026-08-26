@@ -11,7 +11,16 @@ PAYLOAD = {
 
 def test_health_and_paginated_endpoints(client):
     health = client.get("/health")
-    assert health.status_code == 200 and health.json() == {"status": "ok", "phase": "7"}
+    assert health.status_code == 200 and health.json() == {"status": "ok", "phase": "9"}
+
+
+def test_phase8_paper_dashboard_and_controls_have_no_live_route(client):
+    for endpoint in ("/paper/account","/paper/positions","/paper/orders","/paper/trades","/paper/equity","/paper/performance","/paper/risk","/paper/dashboard"):
+        assert client.get(endpoint).status_code==200
+    assert client.post("/paper/start").json()["environment"]=="PAPER"
+    assert client.post("/paper/pause").status_code==200
+    assert client.post("/paper/stop").status_code==200
+    assert client.post("/live/order").status_code==404
 
 
 def test_phase7_market_gateway_endpoints_are_read_only(client):
