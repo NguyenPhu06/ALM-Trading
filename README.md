@@ -4,7 +4,11 @@
 
 Phase 9 thêm React/TypeScript/Vite dashboard quan sát MTF, liquidity, indicators, NN, strategy/risk explanation, paper positions/DCA, journal, equity/performance, system health và alerts. Dashboard chỉ hiển thị backend decisions; không có MT5, Exness, broker hoặc execution control. `LIVE_TRADING_ENABLED=false`, `DEMO_TRADING_ENABLED=false`.
 
-Mở dashboard tại `http://localhost:3000` sau `docker compose up -d --build`. Tài liệu: [dashboard](docs/dashboard.md), [monitoring](docs/monitoring.md), [alerting](docs/alerting.md), [trade explainability](docs/trade_explainability.md).
+Phase 9 cũng thêm vòng lặp orchestration nhỏ nhất để hệ thống chạy end-to-end: provider → validation → snapshot → intelligence → AI (tùy chọn) → strategy → risk → paper → persistence → alerts → dashboard. Vòng lặp là **opt-in** (`phase_9.orchestration.enabled: false`); khởi động API không tự khởi động hoạt động giao dịch. Khi chưa có model đã train, hệ thống giữ nguyên hành vi `MODEL_UNAVAILABLE` và không vào lệnh.
+
+Mở dashboard tại `http://localhost:3000` sau `docker compose up -d --build`. Chạy một tick thủ công: `python -m scripts.run_orchestrator --once`.
+
+Tài liệu: [dashboard](docs/dashboard.md), [orchestration](docs/orchestration.md), [monitoring](docs/monitoring.md), [alerting](docs/alerting.md), [trade explainability](docs/trade_explainability.md).
 
 ## Phase 8 — Paper Trading Engine
 

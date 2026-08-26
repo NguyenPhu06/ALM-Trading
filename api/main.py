@@ -36,17 +36,70 @@ from data_sources.providers.context import EconomicCalendarProvider, Institution
 from data_sources.providers.gateway import TradingViewAdapter
 from data_sources.providers.factory import create_provider
 from paper import PaperServiceState, PaperTradingService, calculate_performance, grouped_performance
-from monitoring.alerts import AlertEngine
-from monitoring.dashboard import alignment as dashboard_alignment, envelope as dashboard_envelope, unavailable_mtf
+from paper.service import bound_repository
+from database.repositories import PaperTradingRepository
+from database.session import SessionLocal
+from orchestration.runner import OrchestrationRunner
+from contextlib import asynccontextmanager
+from monitoring.alerts import AlertEngine, AlertRepositoryNotificationProvider, AlertRouter
+from monitoring.dashboard import DEFAULT_MAX_AGE_SECONDS, alignment as dashboard_alignment, envelope as _dashboard_envelope, unavailable_mtf
 from database.models import PredictionRecord
 from logging_config import configure_logging
 
 
 configure_logging()
 logger = logging.getLogger(__name__)
-app = FastAPI(title="ALM-Trading Paper Research API", version="8.0")
 paper_service = PaperTradingService()
-alert_engine = AlertEngine()
+orchestration = OrchestrationRunner(SessionLocal, paper_service)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Restore persisted paper state, then start the loop only if it is enabled.
+
+    The loop is opt-in (phase_9.orchestration.enabled). Starting the API must not
+    start trading activity on its own, even paper activity.
+    """
+    session = SessionLocal()
+    try:
+        paper_service.restore(PaperTradingRepository(session))
+        logger.info("restored paper state: positions=%d journals=%d",
+                    len(paper_service.positions), len(paper_service.journals))
+    except Exception:
+        logger.exception("paper state restore failed; continuing with an empty book")
+    finally:
+        session.close()
+    thread = orchestration.start_background()
+    try:
+        yield
+    finally:
+        if thread is not None:
+            orchestration.stop()
+
+
+app = FastAPI(title="ALM-Trading Paper Research API", version="9.0", lifespan=lifespan)
+DASHBOARD_MAX_AGE_SECONDS = float(load_yaml().get("phase_9", {}).get("dashboard_max_age_seconds", DEFAULT_MAX_AGE_SECONDS))
+
+
+def dashboard_envelope(data: Any, **kwargs: Any) -> dict[str, Any]:
+    """Apply the configured dashboard freshness budget to every observation payload."""
+    kwargs.setdefault("max_age_seconds", DASHBOARD_MAX_AGE_SECONDS)
+    return _dashboard_envelope(data, **kwargs)
+
+
+def _newest(*timestamps: Any) -> Any:
+    """Freshness of a collection is the newest record it contains."""
+    known = [t for t in timestamps if t is not None]
+    return max(known) if known else None
+
+
+def alert_engine(db: Session) -> AlertEngine:
+    """Alerts have one store. Emission and /dashboard/alerts both go through the database."""
+    return AlertEngine(AlertRepositoryNotificationProvider(AlertRepository(db)))
+
+
+def alert_router(db: Session) -> AlertRouter:
+    return AlertRouter(alert_engine(db))
 
 
 def pagination(limit: int, offset: int) -> tuple[int, int]:
@@ -76,8 +129,8 @@ def _dashboard_intelligence(symbol:str,db:Session):
 @app.get("/dashboard/overview")
 def dashboard_overview(db:Session=Depends(get_db))->dict[str,Any]:
     providers=gateway_provider_status(db)["items"];market="ONLINE" if any(p["status"]=="ONLINE" for p in providers) else "DEGRADED" if any(p["status"]=="DEGRADED" for p in providers) else "OFFLINE"
-    data={"environment":"PAPER","symbols":load_yaml().get("market_data",{}).get("symbols",[]),"timeframes":["D1","H4","H1","M30","M15","M5"],"system":{"database":"ONLINE" if check_connection() else "OFFLINE","market_data":market,"ai_model":"OFFLINE","strategy":"DEGRADED","paper_engine":"ONLINE" if paper_service.state.value in {"RUNNING","PAUSED"} else "DEGRADED","api":"ONLINE"},"risk_state":"BLOCKED" if market!="ONLINE" else "NORMAL","unread_alerts":len(AlertRepository(db).list(unread=True))}
-    return dashboard_envelope(data,quality="VALID" if market=="ONLINE" else "WARNING")
+    data={"environment":"PAPER","symbols":load_yaml().get("market_data",{}).get("symbols",[]),"timeframes":["D1","H4","H1","M30","M15","M5"],"system":{"database":"ONLINE" if check_connection() else "OFFLINE","market_data":market,"ai_model":"ONLINE" if StrategyRepository(db).latest_prediction() else "OFFLINE","strategy":"ONLINE" if StrategyRepository(db).latest_decision() else "DEGRADED","paper_engine":"ONLINE" if paper_service.state.value in {"RUNNING","PAUSED"} else "DEGRADED","api":"ONLINE","orchestration":"ONLINE" if orchestration.enabled else "DISABLED"},"risk_state":"BLOCKED" if market!="ONLINE" else "NORMAL","unread_alerts":len(AlertRepository(db).list(unread=True))}
+    return dashboard_envelope(data,quality="VALID" if market=="ONLINE" else "WARNING",timestamp=datetime.now(timezone.utc))
 
 @app.get("/dashboard/market/{symbol}")
 def dashboard_market(symbol:str,db:Session=Depends(get_db))->dict[str,Any]:
@@ -104,21 +157,29 @@ def dashboard_strategy(symbol:str,db:Session=Depends(get_db))->dict[str,Any]:
     repo=StrategyRepository(db);setup=repo.latest_setup(symbol);decision=repo.latest_decision(symbol);data={"symbol":symbol.upper(),"decision":decision.decision_json if decision else {"decision":"WAIT","reason_codes":["WHY_WAIT:DATA_UNAVAILABLE"]},"setup":setup.setup_json if setup else None};return dashboard_envelope(data,source="strategy_engine",quality="VALID" if decision else "UNAVAILABLE",timestamp=decision.timestamp if decision else None)
 
 @app.get("/dashboard/risk")
-def dashboard_risk()->dict[str,Any]:return dashboard_envelope({"account":asdict(paper_service.account),"daily_pnl":paper_service.daily.daily_pnl,"daily_drawdown":paper_service.daily.daily_drawdown,"risk_state":"BLOCKED" if paper_service.daily.paused or paper_service.risk.kill_switch.enabled else "NORMAL","kill_switch":paper_service.risk.kill_switch.enabled,"limits":load_yaml().get("phase_8",{})},source="paper_risk",quality="VALID")
+def dashboard_risk()->dict[str,Any]:return dashboard_envelope({"account":asdict(paper_service.account),"daily_pnl":paper_service.daily.daily_pnl,"daily_drawdown":paper_service.daily.daily_drawdown,"risk_state":"BLOCKED" if paper_service.daily.paused or paper_service.risk.kill_switch.enabled else "NORMAL","kill_switch":paper_service.risk.kill_switch.enabled,"limits":load_yaml().get("phase_8",{})},source="paper_risk",quality="VALID",timestamp=paper_service.account.updated_at)
 @app.get("/dashboard/positions")
-def dashboard_positions()->dict[str,Any]:return dashboard_envelope({"items":[asdict(p) for p in paper_service.positions.values()],"dca_events":[asdict(e) for e in paper_service.dca_events]},source="paper_engine",quality="VALID")
+def dashboard_positions()->dict[str,Any]:
+    positions=list(paper_service.positions.values())
+    latest=_newest(*[p.updated_at for p in positions],*[e.timestamp for e in paper_service.dca_events])
+    return dashboard_envelope({"items":[asdict(p) for p in positions],"dca_events":[asdict(e) for e in paper_service.dca_events]},source="paper_engine",quality="VALID" if latest else "UNAVAILABLE",timestamp=latest)
 @app.get("/dashboard/performance")
-def dashboard_performance()->dict[str,Any]:return dashboard_envelope(paper_performance(),source="paper_performance",quality="VALID")
+def dashboard_performance()->dict[str,Any]:
+    closed=[j for j in paper_service.journals if j.final_result]
+    latest=_newest(*[j.timestamp for j in closed])
+    return dashboard_envelope(paper_performance(),source="paper_performance",quality="VALID" if closed else "UNAVAILABLE",timestamp=latest)
 @app.get("/dashboard/journal")
-def dashboard_journal()->dict[str,Any]:return dashboard_envelope({"items":[asdict(j) for j in paper_service.journals]},source="trade_journal",quality="VALID")
+def dashboard_journal()->dict[str,Any]:
+    latest=_newest(*[j.timestamp for j in paper_service.journals])
+    return dashboard_envelope({"items":[asdict(j) for j in paper_service.journals]},source="trade_journal",quality="VALID" if paper_service.journals else "UNAVAILABLE",timestamp=latest)
 
 @app.get("/dashboard/alerts")
 def dashboard_alerts(symbol:str|None=None,alert_type:str|None=None,severity:str|None=None,unread:bool|None=None,db:Session=Depends(get_db))->dict[str,Any]:
-    rows=AlertRepository(db).list(symbol=symbol,alert_type=alert_type,severity=severity,unread=unread);return dashboard_envelope({"items":[as_dict(r) for r in rows],"unread":sum(not r.read for r in rows),"critical":sum(r.severity=="CRITICAL" for r in rows)},source="alert_engine",quality="VALID")
+    rows=AlertRepository(db).list(symbol=symbol,alert_type=alert_type,severity=severity,unread=unread);latest=_newest(*[r.timestamp for r in rows]);return dashboard_envelope({"items":[as_dict(r) for r in rows],"unread":sum(not r.read for r in rows),"critical":sum(r.severity=="CRITICAL" for r in rows)},source="alert_engine",quality="VALID" if rows else "UNAVAILABLE",timestamp=latest)
 
 @app.get("/dashboard/timeline/{symbol}")
 def dashboard_timeline(symbol:str,db:Session=Depends(get_db))->dict[str,Any]:
-    structure=StructureEventRepository(db).list(symbol=symbol.upper(),limit=50,offset=0);liquidity=LiquidityEventRepository(db).list(symbol=symbol.upper(),limit=50,offset=0);items=[{"timestamp":r.event_timestamp,"type":r.event_type,"source":"structure","details":as_dict(r)} for r in structure]+[{"timestamp":r.event_timestamp,"type":r.event_type,"source":"liquidity","details":as_dict(r)} for r in liquidity];items.sort(key=lambda x:x["timestamp"],reverse=True);return dashboard_envelope({"symbol":symbol.upper(),"items":items[:100]},source="event_timeline",quality="VALID" if items else "UNAVAILABLE")
+    structure=StructureEventRepository(db).list(symbol=symbol.upper(),limit=50,offset=0);liquidity=LiquidityEventRepository(db).list(symbol=symbol.upper(),limit=50,offset=0);items=[{"timestamp":r.event_timestamp,"type":r.event_type,"source":"structure","details":as_dict(r)} for r in structure]+[{"timestamp":r.event_timestamp,"type":r.event_type,"source":"liquidity","details":as_dict(r)} for r in liquidity];items.sort(key=lambda x:x["timestamp"],reverse=True);return dashboard_envelope({"symbol":symbol.upper(),"items":items[:100]},source="event_timeline",quality="VALID" if items else "UNAVAILABLE",timestamp=items[0]["timestamp"] if items else None)
 
 
 @app.get("/paper/account")
@@ -150,9 +211,13 @@ def paper_pause()->dict[str,Any]:return {"state":paper_service.pause(),"environm
 @app.post("/paper/stop")
 def paper_stop()->dict[str,Any]:return {"state":paper_service.stop(),"environment":"PAPER"}
 @app.post("/paper/close-position/{position_id}")
-def paper_close_position(position_id:str,price:float=Query(...,gt=0))->dict[str,Any]:
+def paper_close_position(position_id:str,price:float=Query(...,gt=0),db:Session=Depends(get_db))->dict[str,Any]:
     if position_id not in paper_service.positions:raise HTTPException(status_code=404,detail="Paper position not found")
-    return asdict(paper_service.close_position(position_id,price=price,timestamp=datetime.now(timezone.utc)))
+    reason=("WHY_EXIT:MANUAL_PAPER_COMMAND",)
+    with bound_repository(paper_service,PaperTradingRepository(db)):
+        position=paper_service.close_position(position_id,price=price,timestamp=datetime.now(timezone.utc),reason=reason)
+    alert_router(db).paper_exit(position,reason_codes=reason)
+    return asdict(position)
 
 
 @app.get("/market/latest/{symbol}")

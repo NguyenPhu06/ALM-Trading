@@ -181,3 +181,17 @@ phase_8:
   max_drawdown: 0.20
   daily_loss_limit: 0.03
   max_concurrent_positions: 3
+
+phase_9:
+  dashboard_max_age_seconds: 300
+  poll_interval_seconds: 10
+  orchestration:
+    # Disabled by default. The loop only ever reaches the paper engine, but it is
+    # opt-in so that starting the API never starts trading activity on its own.
+    enabled: false
+    symbols: [EURUSD]
+    interval_seconds: 60
+    fixed_position_size: 0.1
+    model_version: null
+    model_registry_path: data/models
+    restore_paper_state_on_start: true

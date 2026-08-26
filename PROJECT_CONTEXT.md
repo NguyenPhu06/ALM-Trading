@@ -44,3 +44,14 @@ Paper Trading Engine có account/equity, position state machine, cost-aware exec
 ## Checkpoint Phase 9
 
 Command Center là React/TypeScript/Vite frontend observation-only. FastAPI cung cấp 13 dashboard endpoint có timestamp/source/version/quality, system health, freshness và alert history. Frontend không tính strategy và không có order control. Migration head là `20260825_0012`; LIVE và DEMO trading đều bị khóa.
+
+### Phase 9 repair
+
+- DCA đi qua đúng các cổng như entry: `data_quality`, `provider_status` và `prediction` là tham số bắt buộc; drawdown, daily loss và spread được áp dụng; exposure tính trên toàn bộ vị thế đang mở.
+- Kill switch từ chối mọi hành động làm tăng exposure (entry và DCA), nhưng không bao giờ chặn REDUCE/CLOSE.
+- Alert có một nguồn lưu trữ duy nhất là bảng `dashboard_alerts`; `AlertRouter` nối strategy/risk/paper/data/provider/kill-switch vào alert.
+- Freshness được tính thật từ timestamp nguồn; age không xác định luôn là stale.
+- `OrchestrationCycle` + `OrchestrationRunner` nối toàn tuyến end-to-end, chỉ dùng nến đã đóng, opt-in qua `phase_9.orchestration.enabled`.
+- `PositionStateMachine` và `TimeExitEngine` đã được nối vào vòng đời paper; journal write-back ghi đúng trade vừa đóng.
+- Paper account/positions/orders/journals/equity sống sót qua restart nhờ `PaperTradingRepository.load_state()`.
+- Không có broker route, không có endpoint live/demo, không có model bịa đặt. Vẫn **NO STATISTICAL EDGE DETECTED**.
