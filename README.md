@@ -1,5 +1,17 @@
 # ALM-Trading
 
+## Phase 10 — MT5 Exness Read-Only Integration
+
+Phase 10 kết nối MetaTrader 5 (Exness, tài khoản **DEMO**) làm **DATA PROVIDER**: account, symbol, tick, candle D1→M5, spread, positions, orders và history. MT5 **không phải** execution provider — không gửi lệnh, không sửa lệnh, không đóng position, không DCA thật, không SL/TP thật.
+
+Safety lock bắt buộc: `TRADING_ENVIRONMENT=DEMO`, `MT5_READ_ONLY=true`, `MT5_EXECUTION_ENABLED=false`, `LIVE_TRADING_ENABLED=false`, `DEMO_TRADING_ENABLED=false`, `READ_ONLY_MODE=true`. Sai cấu hình → `BLOCK_CONNECTION` / `BLOCK_DATA_ACCESS`. Tài khoản `REAL` bị chặn và ngắt kết nối ngay.
+
+Credentials (`MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER`) chỉ nằm trong `.env`, không vào source/log/database/API. Login luôn hiển thị dạng mask.
+
+Package `MetaTrader5` chỉ chạy trên Windows cùng máy với terminal; khi thiếu, hệ thống báo `MT5_TERMINAL_NOT_AVAILABLE` và **không sập**.
+
+Tài liệu: [MT5 read-only](docs/mt5_readonly.md), [data pipeline](docs/mt5_data_pipeline.md), [Windows bridge](docs/mt5_windows_bridge.md), [security](docs/mt5_security.md).
+
 ## Phase 9 — Trading Command Center
 
 Phase 9 thêm React/TypeScript/Vite dashboard quan sát MTF, liquidity, indicators, NN, strategy/risk explanation, paper positions/DCA, journal, equity/performance, system health và alerts. Dashboard chỉ hiển thị backend decisions; không có MT5, Exness, broker hoặc execution control. `LIVE_TRADING_ENABLED=false`, `DEMO_TRADING_ENABLED=false`.
@@ -65,6 +77,7 @@ Useful commands:
 
 ```text
 python -m pytest -q
+pip install MetaTrader5      # Windows only, for the Phase 10 live integration
 docker compose config
 python -m scripts.update_cot
 python -m scripts.test_tradingview_webhook

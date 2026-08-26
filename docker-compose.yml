@@ -32,6 +32,17 @@ services:
       MARKET_DATA_RATE_LIMIT: ${MARKET_DATA_RATE_LIMIT:-8}
       MARKET_DATA_MAX_RETRIES: ${MARKET_DATA_MAX_RETRIES:-3}
       MARKET_DATA_BACKOFF_SECONDS: ${MARKET_DATA_BACKOFF_SECONDS:-1}
+      # Phase 10: MT5 is read-only and DEMO-only. The MetaTrader5 package is
+      # Windows-only, so this Linux container reports MT5_TERMINAL_NOT_AVAILABLE
+      # unless a Windows read-only bridge is configured. See docs/mt5_windows_bridge.md.
+      TRADING_ENVIRONMENT: "DEMO"
+      READ_ONLY_MODE: "true"
+      MT5_READ_ONLY: "true"
+      MT5_EXECUTION_ENABLED: "false"
+      MT5_ENABLED: ${MT5_ENABLED:-false}
+      MT5_SERVER: ${MT5_SERVER:-}
+      MT5_BROKER: ${MT5_BROKER:-Exness}
+      MT5_BRIDGE_URL: ${MT5_BRIDGE_URL:-}
     ports:
       - "8000:8000"
     depends_on:

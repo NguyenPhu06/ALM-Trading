@@ -195,3 +195,20 @@ phase_9:
     model_version: null
     model_registry_path: data/models
     restore_paper_state_on_start: true
+
+phase_10:
+  broker: Exness
+  environment: DEMO
+  timeframes: [D1, H4, H1, M30, M15, M5]
+  default_candle_count: 500
+  # Canonical names only. Broker suffixes/prefixes are discovered, never hardcoded.
+  canonical_symbols: [EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, USDCAD, NZDUSD, XAUUSD]
+  tick_stale_seconds: 30
+  candle_stale_multiplier: 3
+  spread:
+    average_window: 50
+    elevated_ratio: 1.5
+    extreme_ratio: 3.0
+  source_comparison:
+    price_tolerance: 0.0010
+    timestamp_tolerance_seconds: 120

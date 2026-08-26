@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, true
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.base import Base
@@ -444,6 +444,129 @@ class DashboardAlertRecord(Base):
     __tablename__="dashboard_alerts";alert_id:Mapped[str]=mapped_column(String(64),primary_key=True);timestamp:Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=False,index=True);symbol:Mapped[str|None]=mapped_column(String(32));alert_type:Mapped[str]=mapped_column(String(64),nullable=False);severity:Mapped[str]=mapped_column(String(16),nullable=False);title:Mapped[str]=mapped_column(String(255),nullable=False);message:Mapped[str]=mapped_column(Text,nullable=False);source:Mapped[str]=mapped_column(String(64),nullable=False);version:Mapped[str]=mapped_column(String(64),nullable=False);data_quality:Mapped[str]=mapped_column(String(16),nullable=False);read:Mapped[bool]=mapped_column(Boolean,nullable=False,default=False);context_json:Mapped[dict[str,Any]|None]=mapped_column(JSON)
 
 
+# ---------------------------------------------------------------- Phase 10 MT5
+# Read-only observation of a DEMO MetaTrader 5 account. No credential is stored:
+# there is deliberately no password or secret column anywhere below.
+
+
+class MT5AccountRecord(Base):
+    __tablename__ = "mt5_accounts"
+    account_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    login_masked: Mapped[str] = mapped_column(String(32), nullable=False)
+    broker: Mapped[str] = mapped_column(String(64), nullable=False)
+    server: Mapped[str | None] = mapped_column(String(128))
+    currency: Mapped[str] = mapped_column(String(16), nullable=False)
+    trade_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    environment: Mapped[str] = mapped_column(String(16), nullable=False)
+    leverage: Mapped[int | None] = mapped_column(Integer)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class MT5AccountSnapshotRecord(Base):
+    __tablename__ = "mt5_account_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    account_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    login_masked: Mapped[str] = mapped_column(String(32), nullable=False)
+    broker: Mapped[str] = mapped_column(String(64), nullable=False)
+    server: Mapped[str | None] = mapped_column(String(128))
+    environment: Mapped[str] = mapped_column(String(16), nullable=False)
+    currency: Mapped[str] = mapped_column(String(16), nullable=False)
+    balance: Mapped[float] = mapped_column(Float, nullable=False)
+    equity: Mapped[float] = mapped_column(Float, nullable=False)
+    margin: Mapped[float] = mapped_column(Float, nullable=False)
+    free_margin: Mapped[float] = mapped_column(Float, nullable=False)
+    margin_level: Mapped[float] = mapped_column(Float, nullable=False)
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class MT5SymbolSnapshotRecord(Base):
+    __tablename__ = "mt5_symbol_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    broker_symbol: Mapped[str] = mapped_column(String(64), nullable=False)
+    digits: Mapped[int | None] = mapped_column(Integer)
+    point: Mapped[float | None] = mapped_column(Float)
+    spread: Mapped[float | None] = mapped_column(Float)
+    visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class MT5TickSnapshotRecord(Base):
+    __tablename__ = "mt5_tick_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    broker_symbol: Mapped[str | None] = mapped_column(String(64))
+    bid: Mapped[float | None] = mapped_column(Float)
+    ask: Mapped[float | None] = mapped_column(Float)
+    last: Mapped[float | None] = mapped_column(Float)
+    spread: Mapped[float | None] = mapped_column(Float)
+    spread_state: Mapped[str | None] = mapped_column(String(16))
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    tick_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class MT5PositionSnapshotRecord(Base):
+    __tablename__ = "mt5_position_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    ticket: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    volume: Mapped[float] = mapped_column(Float, nullable=False)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    profit: Mapped[float] = mapped_column(Float, nullable=False)
+    swap: Mapped[float] = mapped_column(Float, nullable=False)
+    commission: Mapped[float] = mapped_column(Float, nullable=False)
+    magic_number: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    comment: Mapped[str | None] = mapped_column(String(255))
+    ownership: Mapped[str] = mapped_column(String(16), nullable=False)
+    position_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class MT5OrderSnapshotRecord(Base):
+    __tablename__ = "mt5_order_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    ticket: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    order_type: Mapped[str | None] = mapped_column(String(32))
+    volume: Mapped[float] = mapped_column(Float, nullable=False)
+    price_open: Mapped[float] = mapped_column(Float, nullable=False)
+    state: Mapped[str | None] = mapped_column(String(32))
+    magic_number: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    ownership: Mapped[str] = mapped_column(String(16), nullable=False)
+    order_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class MT5ConnectionEventRecord(Base):
+    __tablename__ = "mt5_connection_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    server: Mapped[str | None] = mapped_column(String(128))
+    login_masked: Mapped[str | None] = mapped_column(String(32))
+    reasons: Mapped[str | None] = mapped_column(Text)
+    event_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class MT5DataQualityEventRecord(Base):
+    __tablename__ = "mt5_data_quality_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    timeframe: Mapped[str | None] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    reasons: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    report_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
 __all__ = [
     "MarketCandle", "MarketDataIngestion", "MarketTick", "TradingViewAlert", "LiquidityEvent",
     "StructureEvent", "IndicatorSnapshot", "MarketIntelligenceSnapshot", "COTReport", "InstitutionalPressure",
@@ -456,4 +579,7 @@ __all__ = [
     "PaperAccountRecord", "PaperPositionRecord", "PaperOrderRecord", "PaperExecutionRecord",
     "PaperDCAEventRecord", "PaperRiskEventRecord", "PaperTradeJournalRecord", "PaperEquitySnapshotRecord",
     "DashboardAlertRecord",
+    "MT5AccountRecord", "MT5AccountSnapshotRecord", "MT5SymbolSnapshotRecord",
+    "MT5TickSnapshotRecord", "MT5PositionSnapshotRecord", "MT5OrderSnapshotRecord",
+    "MT5ConnectionEventRecord", "MT5DataQualityEventRecord",
 ]

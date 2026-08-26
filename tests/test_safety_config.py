@@ -37,6 +37,23 @@ def test_compose_api_pins_live_and_demo_trading_off():
     assert str(environment["DEMO_TRADING_ENABLED"]).lower() == "false"
 
 
+def test_compose_pins_the_phase_10_mt5_read_only_posture():
+    with (ROOT / "docker-compose.yml").open(encoding="utf-8") as handle:
+        compose = yaml.safe_load(handle)
+    environment = compose["services"]["api"]["environment"]
+    assert str(environment["TRADING_ENVIRONMENT"]).upper() == "DEMO"
+    assert str(environment["READ_ONLY_MODE"]).lower() == "true"
+    assert str(environment["MT5_READ_ONLY"]).lower() == "true"
+    assert str(environment["MT5_EXECUTION_ENABLED"]).lower() == "false"
+
+
+def test_compose_never_carries_an_mt5_password():
+    """Credentials belong in .env, never in a committed compose file."""
+    text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "MT5_PASSWORD" not in text
+    assert "MT5_LOGIN" not in text
+
+
 def test_compose_frontend_is_observation_only():
     """The dashboard container serves static assets; it holds no broker or DB credential."""
     with (ROOT / "docker-compose.yml").open(encoding="utf-8") as handle:

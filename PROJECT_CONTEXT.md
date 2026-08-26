@@ -27,6 +27,7 @@ Phase 1A provides the foundation, Phase 1B adds deterministic market features, a
 - Phase 5 fits only TRAIN, uses VALIDATION for early stopping, and reserves TEST for final evaluation rather than hyperparameter tuning.
 - Model confidence is not treated as calibrated probability without calibration evidence.
 - Neural inference returns probabilities and structured context only; it cannot create orders or bypass risk.
+- Phase 10 MT5 access is read-only on a DEMO account: no order, modify, close, DCA or SL/TP path exists, and a REAL account is refused outright.
 ## Checkpoint Phase 6
 
 Strategy Intelligence & Trade Setup Engine được thiết kế cho research/backtest/paper simulation. Hệ thống giữ HTF bias riêng với LTF structure, phát hiện conflict và chỉ tạo `EXECUTABLE_SIMULATION` sau risk gate. Migration head mới là `20260824_0009`; API chiến lược chỉ có GET. Không có live execution, commit hay push trong phase này.
@@ -40,6 +41,20 @@ Real Market Data Gateway chuẩn hóa provider → quality/store → snapshot/in
 ## Checkpoint Phase 8
 
 Paper Trading Engine có account/equity, position state machine, cost-aware execution, sizing/risk/daily-loss gates, kill switch, bounded DCA, time-exit integration, causal replay, journal và performance. Chỉ setup `EXECUTABLE_SIMULATION` với dữ liệu/provider/model hợp lệ mới được entry. Migration head là `20260825_0011`; không có live order route.
+
+## Checkpoint Phase 10
+
+MetaTrader 5 (Exness, DEMO) được tích hợp **READ-ONLY** làm data provider. `MT5ReadOnlyClient` không định nghĩa bất kỳ method thực thi nào; `ReadOnlyExecutionGuard` tồn tại riêng cho interface chung và luôn raise `ReadOnlyModeError`.
+
+- Safety lock hai lớp: `Settings` từ chối khởi tạo với cờ sai, và `MT5SafetyLock` chặn trước khi kết nối (`BLOCK_CONNECTION`) hoặc trước khi đọc (`BLOCK_DATA_ACCESS`). Lock không bao giờ tự sửa cấu hình.
+- Tài khoản `REAL` bị chặn và ngắt kết nối; chỉ `DEMO`/`CONTEST` được đọc. `UNKNOWN` bị từ chối.
+- Credentials chỉ trong `.env`; password là `SecretStr`; database chỉ lưu login đã mask; `scrub()` loại key bí mật khỏi mọi JSON.
+- Symbol được khám phá từ terminal, hỗ trợ suffix/prefix broker; nhiều match không có exact → `SYMBOL_MAPPING_AMBIGUOUS`, không tự chọn.
+- Đủ D1/H4/H1/M30/M15/M5, chỉ nến đã đóng, đi qua normalizer chung rồi `MT5DataQualityGate`; dữ liệu INVALID không bao giờ tới strategy.
+- `MT5MarketDataProvider` implement `BaseMarketDataProvider` nên MT5 dùng chung pipeline ingestion → feature → intelligence → NN → strategy → **PAPER**.
+- Migration head là `20260826_0013`; 8 bảng `mt5_*`, không bảng nào có cột credential.
+- Thiếu package/terminal không làm sập hệ thống: `MT5_PACKAGE_NOT_INSTALLED` / `MT5_TERMINAL_NOT_AVAILABLE`.
+- MT5 là DATA PROVIDER, không phải EXECUTION PROVIDER. Vẫn **NO STATISTICAL EDGE DETECTED**.
 
 ## Checkpoint Phase 9
 

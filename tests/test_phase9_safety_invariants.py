@@ -24,7 +24,10 @@ from database.repositories import PaperTradingRepository
 from tests.phase8_helpers import QUOTE, request
 from tests.phase9_helpers import NOW, StubInference, seed_market
 
-FORBIDDEN_ROUTE_TOKENS = ("live", "demo", "broker", "mt5", "exness", "metatrader")
+# Phase 10 sanctions a READ-ONLY MT5 data surface, so "mt5" is no longer forbidden
+# outright; test_mt5_routes_are_read_only below constrains it instead.
+FORBIDDEN_ROUTE_TOKENS = ("live", "demo", "broker", "exness", "metatrader")
+READ_ONLY_MT5_WRITES = {"POST /mt5/connect", "POST /mt5/disconnect"}
 
 
 # ------------------------------------------------------------ 40. no live route
@@ -43,12 +46,24 @@ def test_no_route_accepts_an_order_submission():
         if getattr(route, "methods", None) and route.methods - {"GET", "HEAD", "OPTIONS"}
     )
     assert writable == [
+        # Read-only MT5 session control: opens/closes a data session, never an order.
+        "POST /mt5/connect",
+        "POST /mt5/disconnect",
         "POST /paper/close-position/{position_id}",
         "POST /paper/pause",
         "POST /paper/start",
         "POST /paper/stop",
         "POST /webhooks/tradingview",
     ]
+
+
+def test_mt5_routes_are_read_only():
+    """Every /mt5 route is a GET, apart from read-only session control."""
+    writes = {f"{sorted(route.methods - {'HEAD', 'OPTIONS'})[0]} {route.path}"
+              for route in app.routes
+              if route.path.startswith("/mt5") and getattr(route, "methods", None)
+              and route.methods - {"GET", "HEAD", "OPTIONS"}}
+    assert writes == READ_ONLY_MT5_WRITES, writes
 
 
 def test_live_environment_is_refused_by_the_execution_engine():
@@ -72,7 +87,7 @@ def test_the_orchestration_cycle_only_calls_the_paper_service():
     identifiers = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
     identifiers |= {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     offenders = [name for name in identifiers
-                 if any(token in name.lower() for token in FORBIDDEN_ROUTE_TOKENS)]
+                 if any(token in name.lower() for token in (*FORBIDDEN_ROUTE_TOKENS, "mt5"))]
     assert offenders == [], offenders
     assert "self.paper.enter(" in inspect.getsource(OrchestrationCycle)
 

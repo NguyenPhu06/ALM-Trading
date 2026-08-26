@@ -27,6 +27,7 @@ from features.structure import MarketStructureEngine, StructureEventData
 from features.regime.service import MarketRegimeService
 from features.intelligence import MarketIntelligenceEngine, MarketIntelligenceService
 from dataclasses import asdict
+from decimal import Decimal
 from database.session import check_connection, get_db
 from database.models import EconomicCalendarEventRecord
 from data_sources.gateway import DatabaseMarketDataProvider
@@ -40,6 +41,9 @@ from paper.service import bound_repository
 from database.repositories import PaperTradingRepository
 from database.session import SessionLocal
 from orchestration.runner import OrchestrationRunner
+from database.repositories.mt5 import MT5Repository
+from execution.mt5.client import MT5ReadOnlyClient
+from execution.mt5.service import MT5ReadOnlyService
 from contextlib import asynccontextmanager
 from monitoring.alerts import AlertEngine, AlertRepositoryNotificationProvider, AlertRouter
 from monitoring.dashboard import DEFAULT_MAX_AGE_SECONDS, alignment as dashboard_alignment, envelope as _dashboard_envelope, unavailable_mtf
@@ -51,6 +55,13 @@ configure_logging()
 logger = logging.getLogger(__name__)
 paper_service = PaperTradingService()
 orchestration = OrchestrationRunner(SessionLocal, paper_service)
+# MT5 is a DATA PROVIDER in Phase 10. The client holds connection state, so it is a
+# singleton; the service is built per request because it needs the request session.
+mt5_client = MT5ReadOnlyClient()
+
+
+def mt5_service(db: Session) -> MT5ReadOnlyService:
+    return MT5ReadOnlyService(db, client=mt5_client)
 
 
 @asynccontextmanager
@@ -218,6 +229,181 @@ def paper_close_position(position_id:str,price:float=Query(...,gt=0),db:Session=
         position=paper_service.close_position(position_id,price=price,timestamp=datetime.now(timezone.utc),reason=reason)
     alert_router(db).paper_exit(position,reason_codes=reason)
     return asdict(position)
+
+
+# --------------------------------------------------------------- Phase 10: MT5
+# Read-only. There is no order, close or modify endpoint, by design.
+
+@app.get("/mt5/status")
+def mt5_status(db: Session = Depends(get_db)) -> dict[str, Any]:
+    return dashboard_envelope(mt5_service(db).status(database_online=check_connection()),
+                              source="mt5", quality="VALID",
+                              timestamp=datetime.now(timezone.utc))
+
+
+@app.get("/mt5/account")
+def mt5_account(db: Session = Depends(get_db)) -> dict[str, Any]:
+    result = mt5_service(db).sync_account()
+    if not result.ok:
+        return dashboard_envelope({"account": None, "code": result.code, "reasons": list(result.reasons)},
+                                  source="mt5", quality="UNAVAILABLE")
+    account = result.data
+    return dashboard_envelope({"account": account.as_public_dict(), "code": "OK"},
+                              source="mt5", quality="VALID", timestamp=account.timestamp)
+
+
+@app.get("/mt5/symbols")
+def mt5_symbols(db: Session = Depends(get_db)) -> dict[str, Any]:
+    result = mt5_client.get_symbols()
+    if not result.ok:
+        return dashboard_envelope({"items": [], "code": result.code, "reasons": list(result.reasons)},
+                                  source="mt5", quality="UNAVAILABLE")
+    resolver = mt5_client.resolver
+    items = []
+    for canonical in mt5_client.canonical_symbols:
+        info, code, candidates = resolver.try_resolve(canonical)
+        items.append({"symbol": canonical, "broker_symbol": info.name if info else None,
+                      "resolved": info is not None, "code": code or "OK",
+                      "candidates": list(candidates)})
+    return dashboard_envelope({"items": items, "broker_symbols": list(resolver.names()),
+                               "code": "OK"}, source="mt5", quality="VALID",
+                              timestamp=datetime.now(timezone.utc))
+
+
+@app.get("/mt5/tick/{symbol}")
+def mt5_tick(symbol: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    result = mt5_service(db).sync_tick(symbol)
+    if not result.ok:
+        return dashboard_envelope({"tick": None, "code": result.code, "reasons": list(result.reasons)},
+                                  source="mt5", quality="UNAVAILABLE")
+    tick = {key: (float(value) if isinstance(value, Decimal) else value)
+            for key, value in result.data.items()}
+    return dashboard_envelope({"tick": tick, "code": "OK"}, source="mt5", quality="VALID",
+                              timestamp=tick["timestamp"])
+
+
+@app.get("/mt5/candles/{symbol}/{timeframe}")
+def mt5_candles(symbol: str, timeframe: str, count: int = Query(200, ge=1, le=5000),
+                db: Session = Depends(get_db)) -> dict[str, Any]:
+    result = mt5_client.get_rates(symbol, timeframe, count)
+    if not result.ok:
+        return dashboard_envelope({"items": [], "code": result.code, "reasons": list(result.reasons)},
+                                  source="mt5", quality="UNAVAILABLE")
+    gate = mt5_service(db).gate
+    outcome = gate.evaluate_candles(result.data, symbol=symbol.upper(), timeframe=timeframe.upper())
+    items = [{key: (float(value) if isinstance(value, Decimal) else value)
+              for key, value in candle.items()} for candle in outcome.accepted]
+    quality = "VALID" if outcome.valid else "INVALID"
+    return dashboard_envelope(
+        {"symbol": symbol.upper(), "timeframe": timeframe.upper(), "items": items,
+         "count": len(items), "data_quality": str(outcome.status),
+         "reasons": list(outcome.reasons), "source": "mt5", "code": outcome.code},
+        source="mt5", quality=quality,
+        timestamp=items[-1]["timestamp"] if items else None)
+
+
+@app.get("/mt5/positions")
+def mt5_positions(db: Session = Depends(get_db)) -> dict[str, Any]:
+    result = mt5_service(db).sync_positions()
+    if not result.ok:
+        return dashboard_envelope({"items": [], "code": result.code, "reasons": list(result.reasons)},
+                                  source="mt5", quality="UNAVAILABLE")
+    from execution.mt5.positions import PositionReader
+
+    items = [position.as_dict() for position in result.data]
+    return dashboard_envelope({"items": items, "summary": PositionReader.summarize(result.data),
+                               "read_only": True, "code": "OK"},
+                              source="mt5", quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=datetime.now(timezone.utc) if items else None)
+
+
+@app.get("/mt5/orders")
+def mt5_orders(db: Session = Depends(get_db)) -> dict[str, Any]:
+    result = mt5_service(db).sync_orders()
+    if not result.ok:
+        return dashboard_envelope({"items": [], "code": result.code, "reasons": list(result.reasons)},
+                                  source="mt5", quality="UNAVAILABLE")
+    items = [order.as_dict() for order in result.data]
+    return dashboard_envelope({"items": items, "read_only": True, "code": "OK"},
+                              source="mt5", quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=datetime.now(timezone.utc) if items else None)
+
+
+@app.get("/mt5/health")
+def mt5_health(db: Session = Depends(get_db)) -> dict[str, Any]:
+    report = mt5_client.health_check(database_online=check_connection())
+    return dashboard_envelope(report.as_dict(), source="mt5", quality="VALID",
+                              timestamp=report.timestamp)
+
+
+@app.get("/mt5/data-quality")
+def mt5_data_quality(limit: int = Query(100, ge=1, le=1000),
+                     db: Session = Depends(get_db)) -> dict[str, Any]:
+    rows = MT5Repository(db).recent_quality_events(limit)
+    items = [as_dict(row) for row in rows]
+    return dashboard_envelope({"items": items, "count": len(items)}, source="mt5",
+                              quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=rows[0].timestamp if rows else None)
+
+
+@app.get("/mt5/snapshots")
+def mt5_snapshots(limit: int = Query(50, ge=1, le=500),
+                  db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = MT5Repository(db)
+    account = repository.latest_account_snapshot()
+    positions = repository.latest_positions(limit)
+    connections = repository.recent_connection_events(limit)
+    return dashboard_envelope({
+        "account": as_dict(account) if account else None,
+        "positions": [as_dict(row) for row in positions],
+        "connections": [as_dict(row) for row in connections],
+    }, source="mt5", quality="VALID" if account else "UNAVAILABLE",
+        timestamp=account.timestamp if account else None)
+
+
+@app.post("/mt5/connect")
+def mt5_connect(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Opens a READ-ONLY session. There is no order route behind this endpoint."""
+    report = mt5_service(db).connect()
+    return {"state": str(report.state), "code": report.code, "reasons": list(report.reasons),
+            "server": report.server, "login": report.masked_login,
+            "read_only": True, "execution_enabled": False, "environment": get_settings().environment}
+
+
+@app.post("/mt5/disconnect")
+def mt5_disconnect(db: Session = Depends(get_db)) -> dict[str, Any]:
+    report = mt5_service(db).disconnect()
+    return {"state": str(report.state), "code": report.code, "read_only": True}
+
+
+@app.get("/dashboard/mt5")
+def dashboard_mt5(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """MT5 connection block for the Command Center. Never contains a credential."""
+    service = mt5_service(db)
+    status = service.status(database_online=check_connection())
+    account = mt5_client.account
+    positions = mt5_client.get_positions()
+    return dashboard_envelope({
+        **status,
+        "balance": account.balance if account else None,
+        "equity": account.equity if account else None,
+        "free_margin": account.free_margin if account else None,
+        "margin_level": account.margin_level if account else None,
+        "currency": account.currency if account else None,
+        "positions": len(positions.data) if positions.ok else 0,
+    }, source="mt5", quality="VALID" if account else "UNAVAILABLE",
+        timestamp=account.timestamp if account else None)
+
+
+@app.get("/dashboard/mt5/mtf/{symbol}")
+def dashboard_mt5_mtf(symbol: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """D1 -> M5 straight from MT5, each timeframe carrying its own age and source."""
+    payload = mt5_service(db).multi_timeframe(symbol)
+    available = [entry for entry in payload.values() if entry.get("available")]
+    latest = max((entry["last_candle"] for entry in available), default=None)
+    return dashboard_envelope({"symbol": symbol.upper(), "timeframes": payload, "source": "mt5"},
+                              source="mt5", quality="VALID" if available else "UNAVAILABLE",
+                              timestamp=latest)
 
 
 @app.get("/market/latest/{symbol}")
