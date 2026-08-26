@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     postgres_db: str | None = None
     tradingview_webhook_secret: str = Field(min_length=24)
     live_trading_enabled: bool = False
+    demo_trading_enabled: bool = False
     log_level: str = "INFO"
     market_data_provider: str = "historical"
     market_data_api_key: str | None = None
@@ -39,7 +40,9 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def enforce_phase_safety(self) -> "Settings":
         if self.live_trading_enabled:
-            raise ValueError("LIVE_TRADING_ENABLED must be false during Phases 1-7")
+            raise ValueError("LIVE_TRADING_ENABLED must be false during Phases 1-9")
+        if self.demo_trading_enabled:
+            raise ValueError("DEMO_TRADING_ENABLED must be false during Phase 9")
         return self
 
     @property

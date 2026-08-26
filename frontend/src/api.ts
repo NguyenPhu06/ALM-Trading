@@ -1,0 +1,4 @@
+export type Envelope={timestamp:string;source:string;version:string;data_quality:string;last_update:string;data_age_seconds:number;stale:boolean;data:any};
+const base='/api';
+export async function get(path:string):Promise<Envelope>{const response=await fetch(`${base}${path}`);if(!response.ok)throw new Error(`API ${response.status}`);return response.json()}
+export async function loadDashboard(symbol:string){const paths=['/dashboard/overview',`/dashboard/market/${symbol}`,`/dashboard/mtf/${symbol}`,`/dashboard/liquidity/${symbol}`,`/dashboard/indicators/${symbol}`,`/dashboard/ai/${symbol}`,`/dashboard/strategy/${symbol}`,'/dashboard/risk','/dashboard/positions','/dashboard/performance','/dashboard/journal','/dashboard/alerts',`/dashboard/timeline/${symbol}`];const values=await Promise.all(paths.map(get));return Object.fromEntries(paths.map((p,i)=>[p.split('/')[2]||'overview',values[i]]))}

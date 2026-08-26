@@ -23,6 +23,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       TRADINGVIEW_WEBHOOK_SECRET: ${TRADINGVIEW_WEBHOOK_SECRET:?TRADINGVIEW_WEBHOOK_SECRET is required}
       LIVE_TRADING_ENABLED: "false"
+      DEMO_TRADING_ENABLED: "false"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-historical}
       MARKET_DATA_API_KEY: ${MARKET_DATA_API_KEY:-}
@@ -42,6 +43,21 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
 volumes:

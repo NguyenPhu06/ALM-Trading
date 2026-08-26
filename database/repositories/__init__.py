@@ -6,9 +6,11 @@ from database.repositories.intelligence import MarketIntelligenceRepository
 from database.repositories.simulations import SimulatedTradeRepository
 from database.repositories.datasets import MLDatasetRepository
 from database.repositories.strategy import StrategyRepository
+from database.repositories.paper import PaperTradingRepository
+from database.repositories.alerts import AlertRepository
 
 __all__ = [
     "CandleRepository", "CandleUpsertResult", "COTRepository", "TradingViewAlertRepository",
     "LiquidityEventRepository", "StructureEventRepository", "MarketIntelligenceRepository",
-    "SimulatedTradeRepository", "MLDatasetRepository", "StrategyRepository",
+    "SimulatedTradeRepository", "MLDatasetRepository", "StrategyRepository", "PaperTradingRepository", "AlertRepository",
 ]

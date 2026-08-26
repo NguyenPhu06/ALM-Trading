@@ -36,3 +36,11 @@ Do database production chưa đủ lịch sử cho đánh giá ngoài mẫu/walk
 ## Checkpoint Phase 7
 
 Real Market Data Gateway chuẩn hóa provider → quality/store → snapshot/intelligence, hỗ trợ D1/H4/H1/M30/M15/M5 và chỉ dùng candle đã đóng. TradingView/calendar/institutional direct data giữ trạng thái unavailable khi chưa có nguồn hợp pháp. Institutional observations luôn phân biệt proxy. Paper execution là mô phỏng, không có broker route. Migration head Phase 7 là `20260825_0010`.
+
+## Checkpoint Phase 8
+
+Paper Trading Engine có account/equity, position state machine, cost-aware execution, sizing/risk/daily-loss gates, kill switch, bounded DCA, time-exit integration, causal replay, journal và performance. Chỉ setup `EXECUTABLE_SIMULATION` với dữ liệu/provider/model hợp lệ mới được entry. Migration head là `20260825_0011`; không có live order route.
+
+## Checkpoint Phase 9
+
+Command Center là React/TypeScript/Vite frontend observation-only. FastAPI cung cấp 13 dashboard endpoint có timestamp/source/version/quality, system health, freshness và alert history. Frontend không tính strategy và không có order control. Migration head là `20260825_0012`; LIVE và DEMO trading đều bị khóa.

@@ -161,3 +161,23 @@ phase_7:
   polling_interval_seconds: 60
   high_impact_news_filter: true
   snapshot_timeframes: [D1, H4, H1, M30, M15, M5]
+
+phase_8:
+  initial_balance: 1000
+  environment: PAPER
+  fallback_spread: 0.0001
+  fixed_slippage: 0.00002
+  percentage_slippage: 0
+  volatility_slippage_multiplier: 0.05
+  commission_per_trade: 0
+  commission_percentage: 0
+  max_position_size: 10
+  max_notional: 100000
+  max_account_risk: 0.02
+  max_dca_entries: 3
+  dca_spacing: 0.001
+  dca_size_multiplier: 1.0
+  max_total_exposure: 100000
+  max_drawdown: 0.20
+  daily_loss_limit: 0.03
+  max_concurrent_positions: 3

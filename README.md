@@ -1,5 +1,17 @@
 # ALM-Trading
 
+## Phase 9 — Trading Command Center
+
+Phase 9 thêm React/TypeScript/Vite dashboard quan sát MTF, liquidity, indicators, NN, strategy/risk explanation, paper positions/DCA, journal, equity/performance, system health và alerts. Dashboard chỉ hiển thị backend decisions; không có MT5, Exness, broker hoặc execution control. `LIVE_TRADING_ENABLED=false`, `DEMO_TRADING_ENABLED=false`.
+
+Mở dashboard tại `http://localhost:3000` sau `docker compose up -d --build`. Tài liệu: [dashboard](docs/dashboard.md), [monitoring](docs/monitoring.md), [alerting](docs/alerting.md), [trade explainability](docs/trade_explainability.md).
+
+## Phase 8 — Paper Trading Engine
+
+Phase 8 thêm account/position/order thuần mô phỏng, execution costs, sizing, risk/daily-loss gate, kill switch, DCA/time exit, causal replay, journal và performance dashboard. `PAPER_TRADING_ENABLED=true`, `LIVE_TRADING_ENABLED=false`; không có broker live-order route.
+
+Tài liệu: [paper trading](docs/paper_trading.md), [risk](docs/paper_risk_management.md), [execution](docs/paper_execution.md), [replay](docs/paper_replay.md), [journal](docs/trade_journal.md).
+
 ## Phase 7 — Real Market Data Gateway
 
 Phase 7 thêm gateway dữ liệu thị trường thật/near-real-time, provider health, cache TTL, quality gate, snapshot đa khung, COT context, calendar/news-risk contracts và paper execution thuần mô phỏng. TradingView không bị scrape; dữ liệu tổ chức không được bịa. `LIVE_TRADING_ENABLED=false`.
