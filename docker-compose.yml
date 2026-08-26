@@ -37,12 +37,17 @@ services:
       # unless a Windows read-only bridge is configured. See docs/mt5_windows_bridge.md.
       TRADING_ENVIRONMENT: "DEMO"
       READ_ONLY_MODE: "true"
-      MT5_READ_ONLY: "true"
+      MT5_READ_ONLY: "false"
       MT5_EXECUTION_ENABLED: "false"
       MT5_ENABLED: ${MT5_ENABLED:-false}
       MT5_SERVER: ${MT5_SERVER:-}
       MT5_BROKER: ${MT5_BROKER:-Exness}
       MT5_BRIDGE_URL: ${MT5_BRIDGE_URL:-}
+      # Phase 11: DEMO execution gates. All closed here; opening them is a
+      # deliberate, manual act on a verified DEMO account only.
+      DEMO_TRADING_ENABLED: "false"
+      EXECUTION_KILL_SWITCH: "true"
+      DEMO_EXECUTION_MAX_VOLUME: ${DEMO_EXECUTION_MAX_VOLUME:-0.10}
     ports:
       - "8000:8000"
     depends_on:

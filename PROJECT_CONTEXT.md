@@ -28,6 +28,7 @@ Phase 1A provides the foundation, Phase 1B adds deterministic market features, a
 - Model confidence is not treated as calibrated probability without calibration evidence.
 - Neural inference returns probabilities and structured context only; it cannot create orders or bypass risk.
 - Phase 10 MT5 access is read-only on a DEMO account: no order, modify, close, DCA or SL/TP path exists, and a REAL account is refused outright.
+- Phase 11 DEMO execution is gated by three independent switches, all closed by default; a REAL account is refused twice, and no strategy path can reach the execution client.
 ## Checkpoint Phase 6
 
 Strategy Intelligence & Trade Setup Engine được thiết kế cho research/backtest/paper simulation. Hệ thống giữ HTF bias riêng với LTF structure, phát hiện conflict và chỉ tạo `EXECUTABLE_SIMULATION` sau risk gate. Migration head mới là `20260824_0009`; API chiến lược chỉ có GET. Không có live execution, commit hay push trong phase này.
@@ -41,6 +42,19 @@ Real Market Data Gateway chuẩn hóa provider → quality/store → snapshot/in
 ## Checkpoint Phase 8
 
 Paper Trading Engine có account/equity, position state machine, cost-aware execution, sizing/risk/daily-loss gates, kill switch, bounded DCA, time-exit integration, causal replay, journal và performance. Chỉ setup `EXECUTABLE_SIMULATION` với dữ liệu/provider/model hợp lệ mới được entry. Migration head là `20260825_0011`; không có live order route.
+
+## Checkpoint Phase 11
+
+MT5 DEMO Execution Foundation + manual demo test. **Không** automated trading, **không** strategy auto execution, **không** live trading.
+
+- Ba cổng độc lập, đều đóng mặc định: `DEMO_TRADING_ENABLED=false`, `MT5_EXECUTION_ENABLED=false`, `EXECUTION_KILL_SWITCH=true` (engaged). Thêm `MT5_READ_ONLY=false` và `TRADING_ENVIRONMENT=DEMO`.
+- `LIVE_TRADING_ENABLED`, `TRADING_ENVIRONMENT` và `READ_ONLY_MODE` vẫn là startup invariant và vẫn raise. Ba cờ execution chuyển từ startup invariant sang guard check trên từng lệnh, vì nếu không endpoint manual test sẽ không bao giờ chạy được.
+- `ExecutionGuard` là cổng bắt buộc với 12 nhóm kiểm tra, fail-closed, trả về mọi lý do cùng lúc. `MT5ExecutionClient` từ chối truyền nếu thiếu approval, approval bị từ chối, hoặc approval thuộc request khác — nên guard không thể bị bỏ qua.
+- Account `REAL` bị chặn ở guard và bị chặn lần nữa ngay trước khi truyền. Server phải khớp mẫu DEMO.
+- `ExecutionKillSwitch` mặc định engaged, không bao giờ tự nhả, và nhả phải kèm lý do. Tách biệt hoàn toàn với `paper.GlobalKillSwitch`.
+- Audit 6 stage cho mọi lệnh kể cả bị từ chối; `scrub()` loại mọi key bí mật trước khi ghi. Reconciliation so request/result/position và chỉ báo cáo, không sửa.
+- Migration head là `20260826_0014`; 5 bảng execution, không bảng nào có cột credential.
+- Strategy Engine vẫn dừng ở PAPER — test AST khẳng định không module strategy nào tham chiếu execution. Vẫn **NO STATISTICAL EDGE DETECTED**.
 
 ## Checkpoint Phase 10
 

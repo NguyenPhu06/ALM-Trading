@@ -9,9 +9,10 @@ from database.repositories.strategy import StrategyRepository
 from database.repositories.paper import PaperTradingRepository
 from database.repositories.alerts import AlertRepository
 from database.repositories.mt5 import MT5Repository, scrub
+from database.repositories.execution import ExecutionRepository
 
 __all__ = [
     "CandleRepository", "CandleUpsertResult", "COTRepository", "TradingViewAlertRepository",
     "LiquidityEventRepository", "StructureEventRepository", "MarketIntelligenceRepository",
-    "SimulatedTradeRepository", "MLDatasetRepository", "StrategyRepository", "PaperTradingRepository", "AlertRepository", "MT5Repository", "scrub",
+    "SimulatedTradeRepository", "MLDatasetRepository", "StrategyRepository", "PaperTradingRepository", "AlertRepository", "MT5Repository", "scrub", "ExecutionRepository",
 ]

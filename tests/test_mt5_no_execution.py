@@ -47,16 +47,40 @@ def test_the_fake_terminal_itself_offers_no_order_function():
         assert not hasattr(module, name), name
 
 
-def test_no_module_in_the_mt5_package_calls_an_execution_function():
+# Phase 11 introduced exactly one module permitted to transmit an order. Every
+# other module in the package must still be free of execution calls.
+SANCTIONED_TRANSMITTER = "execution_client.py"
+
+
+def _execution_calls(path):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in EXECUTION_CALLS:
+            found.add(node.attr)
+        if isinstance(node, ast.Name) and node.id in EXECUTION_CALLS:
+            found.add(node.id)
+    return found
+
+
+def test_only_the_sanctioned_client_calls_an_execution_function():
     offenders = []
     for path in PACKAGE.glob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and node.attr in EXECUTION_CALLS:
-                offenders.append(f"{path.name}:{node.attr}")
-            if isinstance(node, ast.Name) and node.id in EXECUTION_CALLS:
-                offenders.append(f"{path.name}:{node.id}")
+        if path.name == SANCTIONED_TRANSMITTER:
+            continue
+        for call in sorted(_execution_calls(path)):
+            offenders.append(f"{path.name}:{call}")
     assert offenders == [], offenders
+
+
+def test_the_sanctioned_client_is_the_one_that_transmits():
+    """Guards the assumption above: if it stops calling order_send, this test tells us."""
+    calls = _execution_calls(PACKAGE / SANCTIONED_TRANSMITTER)
+    assert "order_send" in calls
+
+
+def test_the_read_only_client_module_still_calls_nothing():
+    assert _execution_calls(PACKAGE / "client.py") == set()
 
 
 def test_the_provider_adapter_exposes_no_execution_method():

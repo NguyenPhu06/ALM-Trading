@@ -54,20 +54,21 @@ class MT5SafetyLock:
         self.settings = settings or get_settings()
 
     def _violations(self) -> list[str]:
+        """Invariants that gate CONNECTING and READING.
+
+        Phase 11 moved `mt5_read_only`, `demo_trading_enabled` and
+        `mt5_execution_enabled` out of this set: they now gate EXECUTION only, and
+        are enforced per order by ExecutionGuard. Reading market data must keep
+        working whether or not execution is armed.
+        """
         settings = self.settings
         reasons: list[str] = []
         if str(getattr(settings, "trading_environment", "")).strip().upper() != "DEMO":
             reasons.append("TRADING_ENVIRONMENT_NOT_DEMO")
         if getattr(settings, "live_trading_enabled", False):
             reasons.append("LIVE_TRADING_ENABLED")
-        if getattr(settings, "demo_trading_enabled", False):
-            reasons.append("DEMO_TRADING_ENABLED")
         if not getattr(settings, "read_only_mode", False):
             reasons.append("READ_ONLY_MODE_DISABLED")
-        if not getattr(settings, "mt5_read_only", False):
-            reasons.append("MT5_READ_ONLY_DISABLED")
-        if getattr(settings, "mt5_execution_enabled", False):
-            reasons.append("MT5_EXECUTION_ENABLED")
         return reasons
 
     def evaluate_connection(self) -> SafetyDecision:

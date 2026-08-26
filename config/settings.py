@@ -38,11 +38,13 @@ class Settings(BaseSettings):
     market_data_backoff_seconds: float = 1.0
 
     # ------------------------------------------------------------ Phase 10 MT5
-    # MT5 is a DATA PROVIDER in Phase 10, never an execution provider.
+    # MT5 supplies market data. Phase 11 adds a gated DEMO execution path.
     trading_environment: str = "DEMO"
     read_only_mode: bool = True
     mt5_enabled: bool = False
-    mt5_read_only: bool = True
+    # Phase 11: read-only is no longer a startup invariant, it is one of three
+    # independent execution gates. Data access never depends on it.
+    mt5_read_only: bool = False
     mt5_execution_enabled: bool = False
     mt5_login: int | None = None
     mt5_password: SecretStr | None = None
@@ -54,21 +56,48 @@ class Settings(BaseSettings):
     mt5_bridge_url: str | None = None
     mt5_bridge_token: SecretStr | None = None
 
+    # --------------------------------------------------- Phase 11 DEMO execution
+    # Three independent gates, all closed by default. An order needs every one of
+    # them opened deliberately, and ExecutionGuard re-checks all of them per order.
+    execution_kill_switch: bool = True
+    demo_execution_max_volume: float = 0.10
+    demo_execution_symbols: str = ""
+    execution_audit_enabled: bool = True
+
     @model_validator(mode="after")
     def enforce_phase_safety(self) -> "Settings":
+        """Only LIVE remains a hard startup invariant.
+
+        DEMO_TRADING_ENABLED and MT5_EXECUTION_ENABLED became settable in Phase 11
+        so that a manual DEMO order can be tested at all. They stay false by
+        default and ExecutionGuard refuses every order unless both are true, the
+        kill switch is released, and the account is a verified DEMO account.
+        """
         if self.live_trading_enabled:
-            raise ValueError("LIVE_TRADING_ENABLED must be false during Phases 1-10")
-        if self.demo_trading_enabled:
-            raise ValueError("DEMO_TRADING_ENABLED must be false during Phase 10")
+            raise ValueError("LIVE_TRADING_ENABLED must be false during Phases 1-11")
         if self.trading_environment.strip().upper() != "DEMO":
-            raise ValueError("TRADING_ENVIRONMENT must be DEMO during Phase 10")
+            raise ValueError("TRADING_ENVIRONMENT must be DEMO during Phase 11")
         if not self.read_only_mode:
-            raise ValueError("READ_ONLY_MODE must be true during Phase 10")
-        if not self.mt5_read_only:
-            raise ValueError("MT5_READ_ONLY must be true during Phase 10")
-        if self.mt5_execution_enabled:
-            raise ValueError("MT5_EXECUTION_ENABLED must be false during Phase 10")
+            raise ValueError("READ_ONLY_MODE must be true during Phase 11")
+        if self.demo_trading_enabled and self.mt5_read_only:
+            raise ValueError("MT5_READ_ONLY must be false to enable DEMO execution")
         return self
+
+    @property
+    def execution_allowed_by_config(self) -> bool:
+        """Configuration-level verdict only. The account and guard are checked separately."""
+        return (
+            self.environment == "DEMO"
+            and not self.live_trading_enabled
+            and self.demo_trading_enabled
+            and self.mt5_execution_enabled
+            and not self.mt5_read_only
+            and not self.execution_kill_switch
+        )
+
+    @property
+    def demo_execution_symbol_allowlist(self) -> tuple[str, ...]:
+        return tuple(item.strip().upper() for item in self.demo_execution_symbols.split(",") if item.strip())
 
     @property
     def environment(self) -> str:

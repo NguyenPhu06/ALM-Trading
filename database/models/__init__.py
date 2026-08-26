@@ -567,6 +567,86 @@ class MT5DataQualityEventRecord(Base):
     report_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
+# --------------------------------------------------- Phase 11 DEMO execution
+# Audit store for gated DEMO execution. No credential column exists here either.
+
+
+class ExecutionRequestRecord(Base):
+    __tablename__ = "execution_requests"
+    request_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    side: Mapped[str] = mapped_column(String(8), nullable=False)
+    order_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    volume: Mapped[float] = mapped_column(Float, nullable=False)
+    price: Mapped[float | None] = mapped_column(Float)
+    sl: Mapped[float | None] = mapped_column(Float)
+    tp: Mapped[float | None] = mapped_column(Float)
+    intent: Mapped[str] = mapped_column(String(16), nullable=False)
+    strategy_id: Mapped[str | None] = mapped_column(String(64))
+    signal_id: Mapped[str | None] = mapped_column(String(64))
+    comment: Mapped[str | None] = mapped_column(String(255))
+    environment: Mapped[str] = mapped_column(String(16), nullable=False)
+    request_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ExecutionResultRecord(Base):
+    __tablename__ = "execution_results"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    broker_ticket: Mapped[int | None] = mapped_column(BigInteger)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    side: Mapped[str] = mapped_column(String(8), nullable=False)
+    requested_volume: Mapped[float] = mapped_column(Float, nullable=False)
+    filled_volume: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    requested_price: Mapped[float | None] = mapped_column(Float)
+    filled_price: Mapped[float | None] = mapped_column(Float)
+    sl: Mapped[float | None] = mapped_column(Float)
+    tp: Mapped[float | None] = mapped_column(Float)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    environment: Mapped[str] = mapped_column(String(16), nullable=False)
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ExecutionAuditLogRecord(Base):
+    __tablename__ = "execution_audit_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    stage: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    approved: Mapped[bool | None] = mapped_column(Boolean)
+    reasons: Mapped[str | None] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(64), nullable=False, default="system")
+    environment: Mapped[str] = mapped_column(String(16), nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ReconciliationRecordRow(Base):
+    __tablename__ = "reconciliation_records"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    broker_ticket: Mapped[int | None] = mapped_column(BigInteger)
+    symbol: Mapped[str | None] = mapped_column(String(32))
+    reasons: Mapped[str | None] = mapped_column(Text)
+    record_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class KillSwitchEventRecord(Base):
+    __tablename__ = "kill_switch_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    engaged: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    reason: Mapped[str] = mapped_column(String(255), nullable=False)
+    actor: Mapped[str] = mapped_column(String(64), nullable=False, default="system")
+    event_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
 __all__ = [
     "MarketCandle", "MarketDataIngestion", "MarketTick", "TradingViewAlert", "LiquidityEvent",
     "StructureEvent", "IndicatorSnapshot", "MarketIntelligenceSnapshot", "COTReport", "InstitutionalPressure",
@@ -582,4 +662,6 @@ __all__ = [
     "MT5AccountRecord", "MT5AccountSnapshotRecord", "MT5SymbolSnapshotRecord",
     "MT5TickSnapshotRecord", "MT5PositionSnapshotRecord", "MT5OrderSnapshotRecord",
     "MT5ConnectionEventRecord", "MT5DataQualityEventRecord",
+    "ExecutionRequestRecord", "ExecutionResultRecord", "ExecutionAuditLogRecord",
+    "ReconciliationRecordRow", "KillSwitchEventRecord",
 ]

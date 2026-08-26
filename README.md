@@ -1,5 +1,17 @@
 # ALM-Trading
 
+## Phase 11 — MT5 DEMO Execution Foundation
+
+Phase 11 xây **nền tảng execution** cho MT5 DEMO và **một manual test**. Không có automated trading, không có strategy auto execution, không có live trading.
+
+Một lệnh chỉ đi được khi **cả ba cổng** đều mở, và cả ba đều **đóng theo mặc định**: `DEMO_TRADING_ENABLED=false`, `MT5_EXECUTION_ENABLED=false`, `EXECUTION_KILL_SWITCH=true`. `LIVE_TRADING_ENABLED` vẫn raise ngay khi khởi động nếu bật. Account `REAL` bị chặn hai lần — ở `ExecutionGuard` và một lần nữa ngay trước khi truyền.
+
+`ExecutionGuard` là cổng bắt buộc: `MT5ExecutionClient` từ chối truyền nếu không có `GuardDecision` khớp `request_id`, nên bỏ qua guard **không hoạt động**. Mọi lệnh — kể cả bị từ chối — được audit đủ 6 stage và đối soát với position thật.
+
+Strategy Engine vẫn dừng ở **PAPER**; nó không có đường nào tới MT5 execution.
+
+Tài liệu: [DEMO execution](docs/demo_execution.md), [execution guard](docs/execution_guard.md), [kill switch](docs/kill_switch.md), [reconciliation](docs/reconciliation.md).
+
 ## Phase 10 — MT5 Exness Read-Only Integration
 
 Phase 10 kết nối MetaTrader 5 (Exness, tài khoản **DEMO**) làm **DATA PROVIDER**: account, symbol, tick, candle D1→M5, spread, positions, orders và history. MT5 **không phải** execution provider — không gửi lệnh, không sửa lệnh, không đóng position, không DCA thật, không SL/TP thật.

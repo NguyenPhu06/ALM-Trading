@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 class AlertType(StrEnum):
-    LIQUIDITY_SWEEP="LIQUIDITY_SWEEP";BOS="BOS";CHOCH="CHOCH";MTF_CONFLICT="MTF_CONFLICT";STRATEGY_READY="STRATEGY_READY";STRATEGY_INVALIDATED="STRATEGY_INVALIDATED";DCA_TRIGGER="DCA_TRIGGER";DCA_BLOCKED="DCA_BLOCKED";EXIT_TRIGGER="EXIT_TRIGGER";RISK_WARNING="RISK_WARNING";RISK_BLOCK="RISK_BLOCK";MODEL_ERROR="MODEL_ERROR";DATA_ERROR="DATA_ERROR";PROVIDER_ERROR="PROVIDER_ERROR";PAPER_ENTRY="PAPER_ENTRY"
+    LIQUIDITY_SWEEP="LIQUIDITY_SWEEP";BOS="BOS";CHOCH="CHOCH";MTF_CONFLICT="MTF_CONFLICT";STRATEGY_READY="STRATEGY_READY";STRATEGY_INVALIDATED="STRATEGY_INVALIDATED";DCA_TRIGGER="DCA_TRIGGER";DCA_BLOCKED="DCA_BLOCKED";EXIT_TRIGGER="EXIT_TRIGGER";RISK_WARNING="RISK_WARNING";RISK_BLOCK="RISK_BLOCK";MODEL_ERROR="MODEL_ERROR";DATA_ERROR="DATA_ERROR";PROVIDER_ERROR="PROVIDER_ERROR";PAPER_ENTRY="PAPER_ENTRY";EXECUTION_ENABLED="EXECUTION_ENABLED";EXECUTION_BLOCKED="EXECUTION_BLOCKED";ORDER_SUBMITTED="ORDER_SUBMITTED";ORDER_FILLED="ORDER_FILLED";ORDER_REJECTED="ORDER_REJECTED";RECONCILIATION_FAILED="RECONCILIATION_FAILED";KILL_SWITCH_TRIGGERED="KILL_SWITCH_TRIGGERED"
 class AlertSeverity(StrEnum):LOW="LOW";MEDIUM="MEDIUM";HIGH="HIGH";CRITICAL="CRITICAL"
 @dataclass(frozen=True,slots=True)
 class Alert:
@@ -130,3 +130,66 @@ class AlertRouter:
         message="GLOBAL_KILL_SWITCH_ACTIVATED" if enabled else "GLOBAL_KILL_SWITCH_RELEASED"
         return [self._emit(AlertType.RISK_BLOCK,severity,"Kill switch",message,symbol=symbol,
                            timestamp=timestamp,context={"enabled":enabled},source="paper_risk")]
+
+    # ------------------------------------------------------ Phase 11 execution
+    def order_submitted(self, *, request, timestamp=None):
+        return [self._emit(AlertType.ORDER_SUBMITTED, AlertSeverity.MEDIUM, "DEMO order submitted",
+                           f"{request.side} {request.volume} {request.symbol}",
+                           symbol=request.symbol, timestamp=timestamp or request.timestamp,
+                           context={"request_id": request.request_id, "intent": str(request.intent)},
+                           source="execution")]
+
+    def order_filled(self, *, request, result, timestamp=None):
+        return [self._emit(AlertType.ORDER_FILLED, AlertSeverity.MEDIUM, "DEMO order filled",
+                           f"{result.status} {result.filled_volume} {request.symbol}",
+                           symbol=request.symbol, timestamp=timestamp or result.timestamp,
+                           context={"request_id": request.request_id,
+                                    "broker_ticket": result.broker_ticket,
+                                    "filled_price": result.filled_price},
+                           source="execution")]
+
+    def order_rejected(self, *, request, result=None, reasons=(), timestamp=None):
+        codes = [str(reason) for reason in reasons]
+        severity = (AlertSeverity.CRITICAL
+                    if any(code in {"ACCOUNT_IS_REAL", "LIVE_TRADING_ENABLED"} for code in codes)
+                    else AlertSeverity.HIGH)
+        return [self._emit(AlertType.ORDER_REJECTED, severity, "DEMO order rejected",
+                           ", ".join(codes) or "REJECTED", symbol=request.symbol,
+                           timestamp=timestamp or request.timestamp,
+                           context={"request_id": request.request_id, "reasons": codes},
+                           source="execution")]
+
+    def reconciliation_failed(self, *, record, timestamp=None):
+        return [self._emit(AlertType.RECONCILIATION_FAILED, AlertSeverity.HIGH,
+                           "Reconciliation failed",
+                           ", ".join(record.reasons) or str(record.status),
+                           symbol=record.symbol, timestamp=timestamp or record.timestamp,
+                           context={"request_id": record.request_id,
+                                    "status": str(record.status),
+                                    "differences": record.differences},
+                           source="execution")]
+
+    def execution_state(self, *, enabled, reasons=(), timestamp=None, symbol=None):
+        alert_type = AlertType.EXECUTION_ENABLED if enabled else AlertType.EXECUTION_BLOCKED
+        severity = AlertSeverity.MEDIUM if enabled else AlertSeverity.HIGH
+        return [self._emit(alert_type, severity,
+                           "Execution enabled" if enabled else "Execution blocked",
+                           ", ".join(str(reason) for reason in reasons)
+                           or ("EXECUTION_ENABLED" if enabled else "EXECUTION_BLOCKED"),
+                           symbol=symbol, timestamp=timestamp,
+                           context={"enabled": enabled,
+                                    "reasons": [str(reason) for reason in reasons]},
+                           source="execution")]
+
+    def execution_kill_switch(self, *, enabled, timestamp=None, symbol=None, reason=None):
+        """The Phase 11 EXECUTION kill switch.
+
+        Distinct from `kill_switch` above, which reports the paper engine's risk
+        switch. Same shape, different subsystem, so both keep their own alert type.
+        """
+        severity = AlertSeverity.CRITICAL if enabled else AlertSeverity.MEDIUM
+        message = reason or ("GLOBAL_KILL_SWITCH_ACTIVATED" if enabled
+                             else "GLOBAL_KILL_SWITCH_RELEASED")
+        return [self._emit(AlertType.KILL_SWITCH_TRIGGERED, severity, "Kill switch", str(message),
+                           symbol=symbol, timestamp=timestamp,
+                           context={"engaged": enabled}, source="execution")]

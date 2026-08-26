@@ -26,16 +26,26 @@ from tests.phase9_helpers import NOW, StubInference, seed_market
 
 # Phase 10 sanctions a READ-ONLY MT5 data surface, so "mt5" is no longer forbidden
 # outright; test_mt5_routes_are_read_only below constrains it instead.
-FORBIDDEN_ROUTE_TOKENS = ("live", "demo", "broker", "exness", "metatrader")
+# "demo" is no longer forbidden outright: Phase 11 sanctions ONE manual DEMO
+# execution route, pinned by name below. "live" and "broker" remain forbidden.
+FORBIDDEN_ROUTE_TOKENS = ("live", "broker", "exness", "metatrader")
+SANCTIONED_DEMO_ROUTES = {"/execution/demo/test"}
 READ_ONLY_MT5_WRITES = {"POST /mt5/connect", "POST /mt5/disconnect"}
+EXECUTION_WRITES = {"POST /execution/demo/test", "POST /execution/kill-switch/engage",
+                    "POST /execution/kill-switch/release"}
 
 
 # ------------------------------------------------------------ 40. no live route
-def test_no_route_exposes_live_demo_or_broker_execution():
+def test_no_route_exposes_live_or_broker_execution():
     paths = [route.path.lower() for route in app.routes]
     offenders = [path for path in paths
                  if any(token in path for token in FORBIDDEN_ROUTE_TOKENS)]
     assert offenders == [], offenders
+
+
+def test_only_the_sanctioned_demo_route_mentions_demo():
+    paths = {route.path for route in app.routes if "demo" in route.path.lower()}
+    assert paths == SANCTIONED_DEMO_ROUTES, paths
 
 
 def test_no_route_accepts_an_order_submission():
@@ -46,6 +56,10 @@ def test_no_route_accepts_an_order_submission():
         if getattr(route, "methods", None) and route.methods - {"GET", "HEAD", "OPTIONS"}
     )
     assert writable == [
+        # Gated manual DEMO execution and its kill switch. No LIVE route exists.
+        "POST /execution/demo/test",
+        "POST /execution/kill-switch/engage",
+        "POST /execution/kill-switch/release",
         # Read-only MT5 session control: opens/closes a data session, never an order.
         "POST /mt5/connect",
         "POST /mt5/disconnect",
@@ -55,6 +69,15 @@ def test_no_route_accepts_an_order_submission():
         "POST /paper/stop",
         "POST /webhooks/tradingview",
     ]
+
+
+def test_execution_writes_are_exactly_the_sanctioned_set():
+    """No execution route beyond the manual DEMO test and the kill switch."""
+    writes = {f"{sorted(route.methods - {'HEAD', 'OPTIONS'})[0]} {route.path}"
+              for route in app.routes
+              if route.path.startswith("/execution") and getattr(route, "methods", None)
+              and route.methods - {"GET", "HEAD", "OPTIONS"}}
+    assert writes == EXECUTION_WRITES, writes
 
 
 def test_mt5_routes_are_read_only():

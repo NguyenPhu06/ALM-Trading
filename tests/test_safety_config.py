@@ -43,8 +43,19 @@ def test_compose_pins_the_phase_10_mt5_read_only_posture():
     environment = compose["services"]["api"]["environment"]
     assert str(environment["TRADING_ENVIRONMENT"]).upper() == "DEMO"
     assert str(environment["READ_ONLY_MODE"]).lower() == "true"
-    assert str(environment["MT5_READ_ONLY"]).lower() == "true"
+    # Phase 11 baseline: read-only is one execution gate among three, not the
+    # only protection. Execution stays blocked by the other two plus the switch.
+    assert str(environment["MT5_READ_ONLY"]).lower() == "false"
     assert str(environment["MT5_EXECUTION_ENABLED"]).lower() == "false"
+
+
+def test_compose_pins_the_phase_11_execution_gates_closed():
+    with (ROOT / "docker-compose.yml").open(encoding="utf-8") as handle:
+        compose = yaml.safe_load(handle)
+    environment = compose["services"]["api"]["environment"]
+    assert str(environment["DEMO_TRADING_ENABLED"]).lower() == "false"
+    assert str(environment["EXECUTION_KILL_SWITCH"]).lower() == "true"
+    assert str(environment["LIVE_TRADING_ENABLED"]).lower() == "false"
 
 
 def test_compose_never_carries_an_mt5_password():

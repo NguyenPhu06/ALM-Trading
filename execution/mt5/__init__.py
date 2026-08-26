@@ -7,6 +7,19 @@ from execution.mt5.connection import (
     MT5_TERMINAL_NOT_AVAILABLE, ConnectionReport, ConnectionState, MT5Connection,
     MT5ConnectionError, MT5TerminalUnavailable, TerminalInfo, load_mt5_module, mask_login,
 )
+from execution.mt5.execution_client import ExecutionTransportError, MT5ExecutionClient
+from execution.mt5.execution_guard import ExecutionGuard, GuardContext, GuardDecision
+from execution.mt5.execution_service import DemoExecutionService, ExecutionOutcome
+from execution.mt5.kill_switch import (
+    DCA_BLOCKED, NEW_ENTRY_BLOCKED, ExecutionKillSwitch, ExecutionState, KillSwitchEvent,
+)
+from execution.mt5.order_request import ExecutionIntent, OrderRequest, OrderSide, OrderType
+from execution.mt5.order_result import (
+    ExecutionRejected, ExecutionStatus, OrderResult, RejectionReason,
+)
+from execution.mt5.reconciliation import (
+    RECONCILIATION_FAILED, Reconciler, ReconciliationRecord, ReconciliationStatus,
+)
 from execution.mt5.health import HealthComponent, HealthReport, HealthState, MT5HealthMonitor
 from execution.mt5.history import HistoryReader, MT5Deal, MT5Order
 from execution.mt5.market_data import (
@@ -31,7 +44,13 @@ from execution.mt5.symbols import (
 )
 
 __all__ = [
-    "ACCOUNT_BLOCKED", "ALM_COMMENT_PREFIX", "DATA_QUALITY_ERROR", "DATA_SOURCE_DISCREPANCY",
+    "ACCOUNT_BLOCKED", "ALM_COMMENT_PREFIX", "DCA_BLOCKED", "DemoExecutionService",
+    "ExecutionGuard", "ExecutionIntent", "ExecutionKillSwitch", "ExecutionOutcome",
+    "ExecutionRejected", "ExecutionState", "ExecutionStatus", "ExecutionTransportError",
+    "GuardContext", "GuardDecision", "KillSwitchEvent", "MT5ExecutionClient",
+    "NEW_ENTRY_BLOCKED", "OrderRequest", "OrderResult", "OrderSide", "OrderType",
+    "RECONCILIATION_FAILED", "Reconciler", "ReconciliationRecord", "ReconciliationStatus",
+    "RejectionReason", "DATA_QUALITY_ERROR", "DATA_SOURCE_DISCREPANCY",
     "MT5DataQualityGate", "MT5ReadOnlyService", "QualityOutcome", "SourceComparison",
     "SyncOutcome", "compare_sources", "AccountValidation", "AccountValidator",
     "AmbiguousSymbolError", "ConnectionReport", "ConnectionState",

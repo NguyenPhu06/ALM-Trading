@@ -29,7 +29,7 @@ from features.intelligence import MarketIntelligenceEngine, MarketIntelligenceSe
 from dataclasses import asdict
 from decimal import Decimal
 from database.session import check_connection, get_db
-from database.models import EconomicCalendarEventRecord
+from database.models import EconomicCalendarEventRecord, ExecutionResultRecord
 from data_sources.gateway import DatabaseMarketDataProvider
 from data_sources.snapshot import RealMarketSnapshotEngine
 from data_sources.validators import MarketQualityValidator
@@ -44,6 +44,13 @@ from orchestration.runner import OrchestrationRunner
 from database.repositories.mt5 import MT5Repository
 from execution.mt5.client import MT5ReadOnlyClient
 from execution.mt5.service import MT5ReadOnlyService
+from execution.mt5.execution_client import MT5ExecutionClient
+from execution.mt5.execution_guard import ExecutionGuard
+from execution.mt5.execution_service import DemoExecutionService
+from execution.mt5.kill_switch import ExecutionKillSwitch
+from execution.mt5.order_request import ExecutionIntent, OrderRequest, OrderSide, OrderType
+from database.repositories.execution import ExecutionRepository
+from pydantic import BaseModel, Field as PydanticField
 from contextlib import asynccontextmanager
 from monitoring.alerts import AlertEngine, AlertRepositoryNotificationProvider, AlertRouter
 from monitoring.dashboard import DEFAULT_MAX_AGE_SECONDS, alignment as dashboard_alignment, envelope as _dashboard_envelope, unavailable_mtf
@@ -62,6 +69,38 @@ mt5_client = MT5ReadOnlyClient()
 
 def mt5_service(db: Session) -> MT5ReadOnlyService:
     return MT5ReadOnlyService(db, client=mt5_client)
+
+
+# Phase 11: DEMO execution. The kill switch is process-wide so that engaging it
+# from one request blocks every subsequent one; it ships engaged.
+execution_kill_switch = ExecutionKillSwitch(
+    engaged=bool(get_settings().execution_kill_switch), reason="CONFIG_DEFAULT")
+execution_guard = ExecutionGuard(get_settings(), kill_switch=execution_kill_switch)
+mt5_execution_client = MT5ExecutionClient(
+    get_settings(), connection=mt5_client.connection, read_client=mt5_client)
+
+
+def demo_execution_service(db: Session) -> DemoExecutionService:
+    return DemoExecutionService(
+        db, guard=execution_guard, client=mt5_execution_client, read_client=mt5_client,
+        repository=ExecutionRepository(db), alerts=alert_router(db),
+    )
+
+
+class DemoOrderPayload(BaseModel):
+    """Manual DEMO test order. Deliberately minimal: no strategy can post here."""
+
+    symbol: str
+    side: str
+    volume: float = PydanticField(gt=0)
+    price: float | None = None
+    sl: float | None = None
+    tp: float | None = None
+    comment: str = "ALM-DEMO-MANUAL"
+
+
+class KillSwitchPayload(BaseModel):
+    reason: str = PydanticField(min_length=3, max_length=255)
 
 
 @asynccontextmanager
@@ -404,6 +443,115 @@ def dashboard_mt5_mtf(symbol: str, db: Session = Depends(get_db)) -> dict[str, A
     return dashboard_envelope({"symbol": symbol.upper(), "timeframes": payload, "source": "mt5"},
                               source="mt5", quality="VALID" if available else "UNAVAILABLE",
                               timestamp=latest)
+
+
+# ------------------------------------------------- Phase 11: DEMO execution
+# Manual test only. No strategy path posts here; see docs/execution_guard.md.
+
+@app.get("/execution/status")
+def execution_status(db: Session = Depends(get_db)) -> dict[str, Any]:
+    status = demo_execution_service(db).status()
+    return dashboard_envelope(status, source="execution", quality="VALID",
+                              timestamp=status["timestamp"])
+
+
+@app.get("/execution/audit")
+def execution_audit(request_id: str | None = None, limit: int = Query(100, ge=1, le=1000),
+                    db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = ExecutionRepository(db)
+    rows = repository.audit_trail(request_id) if request_id else repository.recent_audit(limit)
+    items = [as_dict(row) for row in rows]
+    return dashboard_envelope({"items": items, "count": len(items)}, source="execution",
+                              quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=items[0]["timestamp"] if items else None)
+
+
+@app.get("/execution/orders")
+def execution_orders(limit: int = Query(50, ge=1, le=500),
+                     db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = ExecutionRepository(db)
+    latest = repository.latest_result()
+    rows = (db.query(ExecutionResultRecord)
+            .order_by(ExecutionResultRecord.timestamp.desc()).limit(limit).all())
+    items = [as_dict(row) for row in rows]
+    return dashboard_envelope({"items": items, "count": len(items)}, source="execution",
+                              quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=latest.timestamp if latest else None)
+
+
+@app.get("/execution/kill-switch")
+def execution_kill_switch_status(db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = ExecutionRepository(db)
+    events = [as_dict(row) for row in repository.recent_kill_switch_events(20)]
+    return dashboard_envelope({**execution_kill_switch.status(), "events": events},
+                              source="execution", quality="VALID",
+                              timestamp=execution_kill_switch.last_event.timestamp)
+
+
+@app.post("/execution/kill-switch/engage")
+def execution_kill_switch_engage(payload: KillSwitchPayload,
+                                 db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Blocking execution is always allowed."""
+    return demo_execution_service(db).engage_kill_switch(payload.reason, actor="api")
+
+
+@app.post("/execution/kill-switch/release")
+def execution_kill_switch_release(payload: KillSwitchPayload,
+                                  db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Explicit, operator-initiated, and never automatic. A reason is mandatory."""
+    return demo_execution_service(db).release_kill_switch(payload.reason, actor="api")
+
+
+@app.post("/execution/demo/test")
+def execution_demo_test(payload: DemoOrderPayload, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Submit ONE manual DEMO order through ExecutionGuard.
+
+    Every request is audited whether or not it is approved. The guard refuses
+    unless DEMO_TRADING_ENABLED and MT5_EXECUTION_ENABLED are true, the kill
+    switch is released, and the connected account is a verified DEMO account.
+    """
+    side = str(payload.side).strip().upper()
+    if side not in {"BUY", "SELL"}:
+        raise HTTPException(status_code=422, detail="side must be BUY or SELL")
+    order = OrderRequest(
+        symbol=str(payload.symbol).strip().upper(), side=OrderSide(side), volume=payload.volume,
+        order_type=OrderType.MARKET, price=payload.price, sl=payload.sl, tp=payload.tp,
+        comment=payload.comment, intent=ExecutionIntent.MANUAL_TEST,
+        magic_number=get_settings().mt5_magic_number,
+    )
+    logger.info("manual DEMO execution requested: %s %s %s request_id=%s",
+                order.side, order.volume, order.symbol, order.request_id)
+    outcome = demo_execution_service(db).execute(order)
+    return {
+        "request_id": order.request_id,
+        "approved": outcome.decision.approved,
+        "executed": outcome.executed,
+        "environment": get_settings().environment,
+        "automated_trading": False,
+        "decision": outcome.decision.as_dict(),
+        "result": outcome.result.as_dict(),
+        "reconciliation": outcome.reconciliation.as_dict() if outcome.reconciliation else None,
+    }
+
+
+@app.get("/dashboard/execution")
+def dashboard_execution(db: Session = Depends(get_db)) -> dict[str, Any]:
+    service = demo_execution_service(db)
+    status = service.status()
+    positions = mt5_client.get_positions()
+    account = mt5_client.account
+    return dashboard_envelope({
+        **status,
+        "demo_account": {
+            "broker": account.broker if account else get_settings().mt5_broker,
+            "environment": account.environment if account else get_settings().environment,
+            "server": account.server if account else get_settings().mt5_server,
+            "login": account.masked_login if account else None,
+            "balance": account.balance if account else None,
+            "equity": account.equity if account else None,
+        },
+        "open_positions": [position.as_dict() for position in positions.data] if positions.ok else [],
+    }, source="execution", quality="VALID", timestamp=status["timestamp"])
 
 
 @app.get("/market/latest/{symbol}")

@@ -144,6 +144,53 @@ class FakeMT5Module:
         return tuple(Row(**row) for row in self._deals)
 
 
+class FakeExecutionModule(FakeMT5Module):
+    """FakeMT5Module plus order_send, for Phase 11 execution tests ONLY.
+
+    The read-only FakeMT5Module deliberately has no order_send; this subclass is
+    the explicit opt-in used to exercise MT5ExecutionClient. It records every
+    payload so a test can assert exactly what would have been transmitted.
+    """
+
+    def __init__(self, *, retcode: int = 10009, fill_price: float = 1.10024,
+                 ticket: int = 700001, fill_volume: float | None = None,
+                 raise_on_send: bool = False, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.retcode = retcode
+        self.fill_price = fill_price
+        self.ticket = ticket
+        self.fill_volume = fill_volume
+        self.raise_on_send = raise_on_send
+        self.sent: list[dict[str, Any]] = []
+
+    def order_send(self, payload: dict[str, Any]):
+        self.sent.append(dict(payload))
+        if self.raise_on_send:
+            raise RuntimeError("transport failure")
+        volume = self.fill_volume if self.fill_volume is not None else float(payload.get("volume", 0.0))
+        # 10009 DONE and 10010 DONE_PARTIAL both fill; anything else is a refusal.
+        if self.retcode not in (10009, 10010):
+            return Row(retcode=self.retcode, volume=0.0, price=0.0, order=0,
+                       comment="rejected by broker")
+        self._positions.append({
+            "ticket": self.ticket, "symbol": payload["symbol"],
+            "type": payload["type"], "volume": volume,
+            "price_open": self.fill_price, "price_current": self.fill_price,
+            "sl": payload.get("sl", 0.0), "tp": payload.get("tp", 0.0),
+            "profit": 0.0, "swap": 0.0, "commission": 0.0,
+            "time": int(self.now.timestamp()),
+            "magic": payload.get("magic", 0), "comment": payload.get("comment", ""),
+        })
+        return Row(retcode=self.retcode, volume=volume, price=self.fill_price,
+                   order=self.ticket, deal=self.ticket, comment="Request executed")
+
+    def positions_get(self, ticket: int | None = None):
+        rows = tuple(Row(**row) for row in self._positions)
+        if ticket is None:
+            return rows
+        return tuple(row for row in rows if row["ticket"] == int(ticket))
+
+
 def demo_position(**overrides: Any) -> dict[str, Any]:
     row = {"ticket": 500001, "symbol": "EURUSDm", "type": 0, "volume": 0.10,
            "price_open": 1.09950, "price_current": 1.10012, "sl": 1.09500, "tp": 1.10500,
