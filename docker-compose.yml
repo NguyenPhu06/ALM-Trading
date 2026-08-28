@@ -48,6 +48,10 @@ services:
       DEMO_TRADING_ENABLED: "false"
       EXECUTION_KILL_SWITCH: "true"
       DEMO_EXECUTION_MAX_VOLUME: ${DEMO_EXECUTION_MAX_VOLUME:-0.10}
+      # Phase 12: observe the live market, send nothing. The outermost block.
+      OBSERVATION_MODE: "true"
+      OBSERVATION_SYMBOLS: ${OBSERVATION_SYMBOLS:-EURUSD}
+      OBSERVATION_INTERVAL_SECONDS: ${OBSERVATION_INTERVAL_SECONDS:-60}
     ports:
       - "8000:8000"
     depends_on:

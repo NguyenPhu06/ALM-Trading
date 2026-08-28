@@ -20,3 +20,6 @@ data/experiments/
 .vscode/
 frontend/node_modules/
 frontend/dist/
+
+# Phase 15 research outputs: generated from a dataset, never committed.
+reports/research/

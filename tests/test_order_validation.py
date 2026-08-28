@@ -134,3 +134,89 @@ def test_a_request_is_inert_until_a_guard_approves_it():
     request = order()
     assert request.order_type is OrderType.MARKET
     assert not hasattr(request, "send") and not hasattr(request, "execute")
+
+
+# ------------------------------------------- Phase 16: the strict DEMO contract
+# The Phase 11 guard still owns symbol, volume, price and stop validation; these
+# tests cover what Phase 16 added on top of it (section 7).
+from execution.demo.gates import VOLUME_NOT_SIZED
+from execution.demo.limits import MAX_POSITION_SIZE, MAX_RISK_PER_TRADE
+from execution.demo.order import DemoOrderRequest
+from tests import phase16_helpers as p16
+
+
+def demo_reasons(request=None, **ctx):
+    return p16.chain_for(p16.armed()).evaluate(request or p16.order(), p16.context(**ctx)).reasons
+
+
+def test_the_demo_contract_carries_the_whole_provenance():
+    """Section 6, field for field."""
+    payload = p16.order().as_dict()
+    for name in ("request_id", "symbol", "side", "volume", "order_type", "price", "stop_loss",
+                 "take_profit", "strategy_id", "strategy_version", "model_version",
+                 "feature_version", "signal_id", "risk_snapshot_id", "timestamp", "reason"):
+        assert name in payload
+
+
+def test_the_demo_contract_is_inert():
+    request = p16.order()
+    assert not hasattr(request, "send") and not hasattr(request, "execute")
+    assert not hasattr(request, "submit")
+
+
+def test_a_zero_volume_order_is_refused():
+    assert VOLUME_NOT_SIZED in demo_reasons(p16.order(volume=0.0))
+
+
+def test_a_volume_above_the_position_limit_is_refused():
+    assert MAX_POSITION_SIZE in demo_reasons(p16.order(volume=0.5))
+
+
+def test_a_risk_percent_above_the_limit_is_refused():
+    assert MAX_RISK_PER_TRADE in demo_reasons(p16.order(risk_percent=0.5))
+
+
+def test_a_risk_amount_above_the_equity_budget_is_refused():
+    assert MAX_RISK_PER_TRADE in demo_reasons(p16.order(risk_amount=5_000.0), equity=10_000.0)
+
+
+def test_an_unknown_symbol_is_refused_by_the_chain():
+    assert RejectionReason.INVALID_SYMBOL in demo_reasons(p16.order(symbol="ZZZZZZ"))
+
+
+def test_a_broken_lot_step_is_refused_by_the_chain():
+    assert RejectionReason.INVALID_VOLUME in demo_reasons(p16.order(volume=0.013))
+
+
+def test_a_missing_quote_blocks_both_the_spread_gate_and_the_guard():
+    codes = demo_reasons(quote=None)
+    assert "SPREAD_UNAVAILABLE" in codes
+    assert RejectionReason.QUOTE_UNAVAILABLE in codes
+
+
+def test_a_wide_spread_is_refused():
+    assert "MAX_SPREAD_EXCEEDED" in demo_reasons(quote={"bid": 1.1000, "ask": 1.1100})
+
+
+def test_excess_expected_slippage_is_refused():
+    assert "MAX_SLIPPAGE_EXCEEDED" in demo_reasons(expected_slippage=0.01)
+
+
+def test_stale_data_is_refused():
+    assert "DATA_STALE" in demo_reasons(data_age_seconds=100_000.0)
+
+
+def test_unknown_data_quality_is_refused():
+    """Unknown is never treated as good."""
+    assert "DATA_QUALITY_UNKNOWN" in demo_reasons(data_quality_ok=None, data_quality=None)
+
+
+def test_a_failing_timeframe_is_refused():
+    failing = {"M5": {"verdict": "FAIL", "reasons": ["STALE_DATA"]}}
+    assert "DATA_QUALITY_FAILED" in demo_reasons(data_quality=failing, data_quality_ok=None)
+
+
+def test_no_order_bypasses_validation():
+    """Every gate in the section 5 list runs on every request."""
+    decision = p16.chain_for(p16.armed()).evaluate(p16.order(), p16.context())
+    assert {gate.name for gate in decision.gates} == set(p16.chain_for().gate_names())

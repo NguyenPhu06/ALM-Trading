@@ -29,10 +29,24 @@ from tests.phase9_helpers import NOW, StubInference, seed_market
 # "demo" is no longer forbidden outright: Phase 11 sanctions ONE manual DEMO
 # execution route, pinned by name below. "live" and "broker" remain forbidden.
 FORBIDDEN_ROUTE_TOKENS = ("live", "broker", "exness", "metatrader")
-SANCTIONED_DEMO_ROUTES = {"/execution/demo/test"}
+# Phase 16 adds a gated DEMO proposal route and its dashboard panel. Both are
+# DEMO-only by construction; "live" and "broker" remain forbidden outright.
+SANCTIONED_DEMO_ROUTES = {"/execution/demo/test", "/execution/demo/propose",
+                          "/dashboard/demo-execution"}
 READ_ONLY_MT5_WRITES = {"POST /mt5/connect", "POST /mt5/disconnect"}
 EXECUTION_WRITES = {"POST /execution/demo/test", "POST /execution/kill-switch/engage",
-                    "POST /execution/kill-switch/release"}
+                    "POST /execution/kill-switch/release",
+                    # Phase 16: propose one gated DEMO order, and approve or reject
+                    # it. None of the three can reach a broker on its own; the gate
+                    # chain and ExecutionGuard still decide per order.
+                    "POST /execution/demo/propose",
+                    "POST /execution/proposals/{proposal_id}/approve",
+                    "POST /execution/proposals/{proposal_id}/reject"}
+# Phase 12 adds one write: running an observation cycle. It sends no order.
+OBSERVATION_WRITES = {"POST /observation/cycle"}
+# Phase 13 adds two human-gated writes. Neither trains a model and neither trades:
+# a retraining request is a record, and approval is the promotion gate.
+AI_WRITES = {"POST /ai/retraining/request", "POST /ai/models/{model_id}/approve"}
 
 
 # ------------------------------------------------------------ 40. no live route
@@ -56,19 +70,51 @@ def test_no_route_accepts_an_order_submission():
         if getattr(route, "methods", None) and route.methods - {"GET", "HEAD", "OPTIONS"}
     )
     assert writable == [
+        # Phase 13 learning: request retraining, and approve a promotion. Neither
+        # fits a model and neither can place an order.
+        "POST /ai/models/{model_id}/approve",
+        "POST /ai/retraining/request",
         # Gated manual DEMO execution and its kill switch. No LIVE route exists.
+        "POST /execution/demo/propose",
         "POST /execution/demo/test",
         "POST /execution/kill-switch/engage",
         "POST /execution/kill-switch/release",
+        # Phase 16 manual approval: a human approves or rejects one proposal.
+        "POST /execution/proposals/{proposal_id}/approve",
+        "POST /execution/proposals/{proposal_id}/reject",
         # Read-only MT5 session control: opens/closes a data session, never an order.
         "POST /mt5/connect",
         "POST /mt5/disconnect",
+        # Phase 12 observation: runs one analysis cycle, sends nothing.
+        "POST /observation/cycle",
         "POST /paper/close-position/{position_id}",
         "POST /paper/pause",
         "POST /paper/start",
         "POST /paper/stop",
+        # Phase 17: the only validation write. It closes the circuit breaker, and
+        # refuses without a health check, a risk check, account validation and a
+        # named human. It resumes nothing on its own.
+        "POST /validation/circuit-breaker/reset",
         "POST /webhooks/tradingview",
     ]
+
+
+def test_ai_writes_are_exactly_the_sanctioned_set():
+    """No endpoint trains a model; training is an explicit CLI job."""
+    writes = {f"{sorted(route.methods - {'HEAD', 'OPTIONS'})[0]} {route.path}"
+              for route in app.routes
+              if route.path.startswith("/ai") and getattr(route, "methods", None)
+              and route.methods - {"GET", "HEAD", "OPTIONS"}}
+    assert writes == AI_WRITES, writes
+    assert not [path for path in writes if "train" in path and "request" not in path]
+
+
+def test_observation_writes_are_exactly_the_sanctioned_set():
+    writes = {f"{sorted(route.methods - {'HEAD', 'OPTIONS'})[0]} {route.path}"
+              for route in app.routes
+              if route.path.startswith("/observation") and getattr(route, "methods", None)
+              and route.methods - {"GET", "HEAD", "OPTIONS"}}
+    assert writes == OBSERVATION_WRITES, writes
 
 
 def test_execution_writes_are_exactly_the_sanctioned_set():
@@ -94,6 +140,77 @@ def test_live_environment_is_refused_by_the_execution_engine():
         PaperExecutionEngine().execute(request(), quote=QUOTE, environment=TradingEnvironment.LIVE)
     with pytest.raises(LiveExecutionBlocked):
         EnvironmentSafetyLock(live_trading_enabled=True).assert_allowed(TradingEnvironment.PAPER)
+
+
+def test_no_route_can_enable_execution_or_change_the_mode():
+    """Phase 16: arming execution is a configuration change, never an API call.
+
+    The mode, the flags and the automation opt-in are all read-only over HTTP, so
+    an operator with API access alone cannot move the system out of OBSERVATION.
+    """
+    forbidden = {"mode", "enable", "arm", "settings", "config"}
+    offenders = [route.path for route in app.routes
+                 if getattr(route, "methods", None)
+                 and route.methods - {"GET", "HEAD", "OPTIONS"}
+                 # Segment-wise: "{model_id}" contains "mode" and is not a mode route.
+                 and forbidden & set(route.path.lower().split("/"))]
+    assert offenders == [], offenders
+
+
+def test_real_account_execution_is_refused_at_startup():
+    from config.settings import Settings
+
+    with pytest.raises(Exception, match="REAL_ACCOUNT_EXECUTION"):
+        Settings(database_url="sqlite://",
+                 tradingview_webhook_secret="a-secure-test-secret-of-24-chars",
+                 real_account_execution=True)
+
+
+def test_observation_remains_the_default_execution_mode():
+    """Section 39: after Phase 16, OBSERVATION is still what ships."""
+    settings = get_settings()
+    assert settings.execution_mode == "OBSERVATION"
+    assert settings.demo_automated_execution_enabled is False
+    assert settings.demo_dca_enabled is False
+    assert settings.real_account_execution is False
+    assert settings.execution_kill_switch is True
+
+
+def test_validation_endpoints_are_read_only_apart_from_the_breaker_reset():
+    """Phase 17: measuring never moves the system."""
+    writes = {f"{sorted(route.methods - {'HEAD', 'OPTIONS'})[0]} {route.path}"
+              for route in app.routes
+              if route.path.startswith("/validation") and getattr(route, "methods", None)
+              and route.methods - {"GET", "HEAD", "OPTIONS"}}
+    assert writes == {"POST /validation/circuit-breaker/reset"}, writes
+
+
+def test_shadow_mode_is_a_simulation_mode():
+    """SHADOW runs the DEMO pipeline and stops one step short of the wire."""
+    from execution.demo.modes import BROKER_MODES, SIMULATION_MODES, ExecutionMode
+
+    assert ExecutionMode.SHADOW in SIMULATION_MODES
+    assert ExecutionMode.SHADOW not in BROKER_MODES
+
+
+def test_no_validation_module_imports_an_execution_client():
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "validation"
+    forbidden = {"MT5ExecutionClient", "MT5Connection", "PaperExecutionEngine"}
+    offenders = []
+    for path in sorted(root.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                names |= {alias.name for alias in node.names}
+            elif isinstance(node, ast.Name):
+                names.add(node.id)
+        if names & forbidden:
+            offenders.append(path.name)
+    assert offenders == [], offenders
 
 
 def test_settings_refuse_to_enable_live_or_demo_trading():

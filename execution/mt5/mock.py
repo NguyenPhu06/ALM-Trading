@@ -38,6 +38,8 @@ class TerminalStub:
     company: str = "Exness Technologies Ltd"
     path: str = r"C:\\Program Files\\MetaTrader 5 EXNESS"
     build: int = 4620
+    trade_allowed: bool = True
+    tradeapi_disabled: bool = False
 
 
 def _rates(symbol: str, timeframe: str, count: int, *, now: datetime,
@@ -66,7 +68,10 @@ class FakeMT5Module:
                  server: str = "Exness-MT5Trial8", login: int = 987654321,
                  now: datetime | None = None, initialize_result: bool = True,
                  positions: Sequence[dict] | None = None, orders: Sequence[dict] | None = None,
-                 deals: Sequence[dict] | None = None, tick_age_seconds: float = 0.5):
+                 deals: Sequence[dict] | None = None, tick_age_seconds: float = 0.5,
+                 trade_allowed: bool = True, tradeapi_disabled: bool = False):
+        self.trade_allowed = trade_allowed
+        self.tradeapi_disabled = tradeapi_disabled
         self.trade_mode = trade_mode
         self.connected = connected
         self.symbol_names = tuple(symbols)
@@ -100,7 +105,8 @@ class FakeMT5Module:
     def terminal_info(self) -> TerminalStub | None:
         if not self.initialized:
             return None
-        return TerminalStub(connected=self.connected)
+        return TerminalStub(connected=self.connected, trade_allowed=self.trade_allowed,
+                            tradeapi_disabled=self.tradeapi_disabled)
 
     # --------------------------------------------------------------- reads
     def account_info(self) -> Row | None:

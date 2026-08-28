@@ -58,6 +58,13 @@ def test_compose_pins_the_phase_11_execution_gates_closed():
     assert str(environment["LIVE_TRADING_ENABLED"]).lower() == "false"
 
 
+def test_compose_pins_observation_mode_on():
+    with (ROOT / "docker-compose.yml").open(encoding="utf-8") as handle:
+        compose = yaml.safe_load(handle)
+    environment = compose["services"]["api"]["environment"]
+    assert str(environment["OBSERVATION_MODE"]).lower() == "true"
+
+
 def test_compose_never_carries_an_mt5_password():
     """Credentials belong in .env, never in a committed compose file."""
     text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")

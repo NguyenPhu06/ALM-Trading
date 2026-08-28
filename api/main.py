@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hmac
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from api.schemas import TradingViewWebhook
 from config.settings import get_settings, load_yaml
+from ai.edge.edge_detector import REQUIRED_BASELINES as EDGE_REQUIRED_BASELINES
 from data_quality import DataValidationError
 from data_sources.health import MarketDataHealthService
 from database.repositories import (
@@ -50,6 +51,31 @@ from execution.mt5.execution_service import DemoExecutionService
 from execution.mt5.kill_switch import ExecutionKillSwitch
 from execution.mt5.order_request import ExecutionIntent, OrderRequest, OrderSide, OrderType
 from database.repositories.execution import ExecutionRepository
+from database.repositories.demo import DemoTradingRepository
+from execution.demo import (
+    ControlledDemoTradingService, DailyRiskTracker, DemoOrderRequest, DemoRiskLimits,
+    DemoTradeJournal, ExecutionComparator, ExecutionMode, ExecutionModeResolver,
+    IdempotencyRegistry, ManualApprovalQueue, PaperDemoComparison, PositionMonitor,
+)
+from execution.demo.approval import ApprovalRefused
+from execution.demo.gates import DemoGateChain
+from database.repositories.validation import ValidationRepository
+from validation import (
+    CircuitBreaker, RecoveryChecklist, RecoveryRefused, ValidationService,
+)
+from database.repositories.observation import ObservationRepository
+from database.repositories.learning import LearningRepository
+from database.repositories.forward import ForwardObservationRepository
+from database.repositories.research import ResearchRepository
+from ai.model_registry import (
+    ApprovalToken, ChampionChallengerComparator, ModelRecord, ModelRegistry, ModelState,
+    ModelTask, PromotionRefused,
+)
+from ai.inference.multitask_engine import ConfidenceThresholds
+from ai.training.retraining import RetrainingPolicy
+from observation.cycle import ObservationCycle
+from observation.demo_account import DemoAccountValidator
+from observation.health import ComponentHealth, SystemHealthMonitor
 from pydantic import BaseModel, Field as PydanticField
 from contextlib import asynccontextmanager
 from monitoring.alerts import AlertEngine, AlertRepositoryNotificationProvider, AlertRouter
@@ -80,6 +106,51 @@ mt5_execution_client = MT5ExecutionClient(
     get_settings(), connection=mt5_client.connection, read_client=mt5_client)
 
 
+# Phase 16: controlled DEMO trading. The queue, journal, monitor, day budget and
+# idempotency registry are process-wide for the same reason the kill switch is —
+# an approval granted in one request must be visible to the next one.
+demo_gate_chain = DemoGateChain(get_settings(), guard=execution_guard)
+demo_approvals = ManualApprovalQueue()
+demo_journal = DemoTradeJournal()
+demo_monitor = PositionMonitor()
+demo_daily_risk = DailyRiskTracker()
+demo_idempotency = IdempotencyRegistry()
+demo_counters: dict[str, int] = {}
+demo_mode_resolver = ExecutionModeResolver(get_settings())
+
+
+# Phase 17. The breaker is process-wide for the same reason the kill switch is,
+# and separate from it on purpose: releasing the switch must not be a way around
+# the recovery checklist.
+circuit_breaker = CircuitBreaker(get_settings(), kill_switch=execution_kill_switch)
+
+
+def validation_service(db: Session) -> ValidationService:
+    """Reads and reports. It holds no execution client and no transport."""
+    return ValidationService(ValidationRepository(db), settings=get_settings(),
+                             breaker=circuit_breaker, alerts=alert_router(db))
+
+
+def controlled_demo_service(db: Session) -> ControlledDemoTradingService:
+    """A per-request service over the process-wide Phase 16 state."""
+    repository = ExecutionRepository(db)
+    demo_idempotency.repository = repository
+    return ControlledDemoTradingService(
+        db, chain=demo_gate_chain, guard=execution_guard, client=mt5_execution_client,
+        read_client=mt5_client, repository=repository,
+        demo_repository=DemoTradingRepository(db), alerts=alert_router(db),
+        approvals=demo_approvals, journal=demo_journal, monitor=demo_monitor,
+        daily=demo_daily_risk, idempotency=demo_idempotency, counters=demo_counters,
+        breaker=circuit_breaker, validation_repository=ValidationRepository(db),
+    )
+
+
+def observation_cycle(db: Session) -> ObservationCycle:
+    """A fresh cycle per request; it holds no state between calls."""
+    return ObservationCycle(db, client=mt5_client, alerts=alert_router(db),
+                            repository=ObservationRepository(db))
+
+
 def demo_execution_service(db: Session) -> DemoExecutionService:
     return DemoExecutionService(
         db, guard=execution_guard, client=mt5_execution_client, read_client=mt5_client,
@@ -101,6 +172,64 @@ class DemoOrderPayload(BaseModel):
 
 class KillSwitchPayload(BaseModel):
     reason: str = PydanticField(min_length=3, max_length=255)
+
+
+class DemoProposalPayload(BaseModel):
+    """A Phase 16 execution proposal.
+
+    There is no `volume` field, deliberately: section 8 forbids an arbitrary lot
+    size, so the volume is derived from equity, risk and the stop distance. A
+    caller states the stop, not the size.
+    """
+
+    symbol: str
+    side: str
+    signal_id: str = PydanticField(min_length=1, max_length=128)
+    entry_price: float = PydanticField(gt=0)
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    risk_percent: float | None = PydanticField(default=None, gt=0, le=1)
+    strategy_id: str | None = None
+    strategy_version: str | None = None
+    model_version: str | None = None
+    feature_version: str | None = None
+    risk_snapshot_id: str | None = None
+    reason: str = ""
+    intent: str = "NEW_ENTRY"
+
+
+class DemoApprovalPayload(BaseModel):
+    """Section 4: an approval names a human and states a reason."""
+
+    approved_by: str = PydanticField(min_length=2, max_length=128)
+    reason: str = PydanticField(min_length=3, max_length=255)
+
+
+class BreakerRecoveryPayload(BaseModel):
+    """Section 23. All four checks are explicit; none of them is inferred."""
+
+    health_check: bool = False
+    risk_check: bool = False
+    account_validation: bool = False
+    approved_by: str = PydanticField(min_length=2, max_length=128)
+    reason: str = PydanticField(min_length=3, max_length=255)
+
+
+class DemoRejectionPayload(BaseModel):
+    reason: str = PydanticField(min_length=3, max_length=255)
+    actor: str = PydanticField(default="operator", min_length=2, max_length=128)
+
+
+class ApprovalPayload(BaseModel):
+    """Human approval is the only route to promotion (section 27)."""
+
+    approved_by: str = PydanticField(min_length=2, max_length=128)
+    reason: str = PydanticField(min_length=3, max_length=255)
+
+
+class RetrainingPayload(BaseModel):
+    reason: str = PydanticField(min_length=3, max_length=255)
+    new_observations: int = PydanticField(default=0, ge=0)
 
 
 @asynccontextmanager
@@ -552,6 +681,1124 @@ def dashboard_execution(db: Session = Depends(get_db)) -> dict[str, Any]:
         },
         "open_positions": [position.as_dict() for position in positions.data] if positions.ok else [],
     }, source="execution", quality="VALID", timestamp=status["timestamp"])
+
+
+# --------------------------------------- Phase 16: controlled DEMO trading
+# OBSERVATION is the default mode and LIVE is impossible. Every endpoint below
+# either reports state or moves one order through the gate chain; none of them
+# can change the mode, and none of them bypasses ExecutionGuard.
+
+@app.get("/execution/mode")
+def execution_mode() -> dict[str, Any]:
+    """The configured execution mode and what it permits."""
+    decision = demo_mode_resolver.resolve()
+    return dashboard_envelope({
+        **decision.as_dict(),
+        "default_mode": str(ExecutionMode.OBSERVATION),
+        "available_modes": [str(mode) for mode in ExecutionMode],
+        "blocking_reasons": list(demo_mode_resolver.blocking_reasons()),
+    }, source="demo_execution", quality="VALID", timestamp=decision.timestamp)
+
+
+@app.get("/execution/limits")
+def execution_limits() -> dict[str, Any]:
+    limits = DemoRiskLimits.from_config().as_dict()
+    return dashboard_envelope({"limits": limits, "gates": list(demo_gate_chain.gate_names())},
+                              source="demo_execution", quality="VALID",
+                              timestamp=datetime.now(timezone.utc))
+
+
+@app.post("/execution/demo/propose")
+def execution_demo_propose(payload: DemoProposalPayload,
+                           db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Size, gate and record one proposal. Sends nothing, in any mode.
+
+    In DEMO_AUTOMATED the caller follows up with nothing: `submit` happens only
+    through this endpoint when the mode says so, and the response reports where
+    the request stopped.
+    """
+    side = str(payload.side).strip().upper()
+    if side not in {"BUY", "SELL"}:
+        raise HTTPException(status_code=422, detail="side must be BUY or SELL")
+    intent = str(payload.intent).strip().upper()
+    if intent not in {item.value for item in ExecutionIntent}:
+        raise HTTPException(status_code=422, detail="unknown execution intent")
+
+    service = controlled_demo_service(db)
+    sizing = service.size(symbol=payload.symbol, entry_price=payload.entry_price,
+                          stop_loss=payload.stop_loss, risk_percent=payload.risk_percent)
+    if not sizing.valid:
+        # No stop distance, no tick economics, or a risk budget too small for one
+        # lot. Refusing is the point: a default lot size would be an unpriced risk.
+        return {"approved": False, "executed": False, "state": "BLOCKED",
+                "reasons": list(sizing.reasons), "sizing": sizing.as_dict(),
+                "environment": get_settings().environment, "live_trading_enabled": False}
+
+    request = DemoOrderRequest.build(
+        symbol=payload.symbol, side=side, volume=sizing.volume, signal_id=payload.signal_id,
+        trading_day=service.trading_day(), price=payload.entry_price,
+        stop_loss=payload.stop_loss, take_profit=payload.take_profit,
+        strategy_id=payload.strategy_id, strategy_version=payload.strategy_version,
+        model_version=payload.model_version, feature_version=payload.feature_version,
+        risk_snapshot_id=payload.risk_snapshot_id, reason=payload.reason,
+        intent=ExecutionIntent(intent), magic_number=get_settings().mt5_magic_number,
+        risk_percent=sizing.risk_percent, risk_amount=sizing.risk_amount,
+        stop_distance=sizing.stop_distance)
+    logger.info("demo execution proposed: %s %s %s request_id=%s mode=%s",
+                request.side, request.volume, request.symbol, request.request_id,
+                service.mode)
+    outcome = service.submit(request)
+    body = outcome.as_dict()
+    body.update({"environment": get_settings().environment, "live_trading_enabled": False,
+                 "sizing": sizing.as_dict(), "mode": str(service.mode)})
+    return body
+
+
+@app.get("/execution/proposals")
+def execution_proposals(limit: int = Query(50, ge=1, le=500),
+                        db: Session = Depends(get_db)) -> dict[str, Any]:
+    rows = DemoTradingRepository(db).recent_proposals(limit)
+    items = [as_dict(row) for row in rows]
+    pending = [proposal.as_dict() for proposal in demo_approvals.pending()]
+    return dashboard_envelope({"items": items, "count": len(items), "pending": pending},
+                              source="demo_execution",
+                              quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=items[0]["timestamp"] if items else None)
+
+
+@app.post("/execution/proposals/{proposal_id}/approve")
+def execution_proposal_approve(proposal_id: str, payload: DemoApprovalPayload,
+                               db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Human approval, then submission. The approver is named in the audit trail."""
+    service = controlled_demo_service(db)
+    try:
+        outcome = service.approve(proposal_id, approved_by=payload.approved_by,
+                                  reason=payload.reason)
+    except ApprovalRefused as error:
+        raise HTTPException(status_code=409, detail=error.code) from error
+    body = outcome.as_dict()
+    body.update({"approved_by": payload.approved_by,
+                 "environment": get_settings().environment, "live_trading_enabled": False})
+    return body
+
+
+@app.post("/execution/proposals/{proposal_id}/reject")
+def execution_proposal_reject(proposal_id: str, payload: DemoRejectionPayload,
+                              db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        proposal = controlled_demo_service(db).reject(proposal_id, reason=payload.reason,
+                                                      actor=payload.actor)
+    except ApprovalRefused as error:
+        raise HTTPException(status_code=409, detail=error.code) from error
+    return proposal.as_dict()
+
+
+@app.get("/execution/daily-risk")
+def execution_daily_risk(db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = DemoTradingRepository(db)
+    state = demo_daily_risk.state
+    history = [as_dict(row) for row in repository.daily_risk_history(30)]
+    payload = state.as_dict() if state else {"trading_day": None,
+                                             "reasons": ["NO_TRADING_DAY_STARTED"]}
+    return dashboard_envelope({**payload, "history": history,
+                               "timezone": demo_daily_risk.timezone_name,
+                               "reset_hour": demo_daily_risk.reset_hour,
+                               "limits": demo_daily_risk.limits.as_dict()},
+                              source="demo_risk",
+                              quality="VALID" if state else "UNAVAILABLE",
+                              timestamp=state.updated_at if state else None)
+
+
+@app.get("/execution/positions")
+def execution_positions() -> dict[str, Any]:
+    snapshots = [snapshot.as_dict() for snapshot in demo_monitor.snapshots]
+    return dashboard_envelope({"items": snapshots, "count": len(snapshots),
+                               "summary": demo_monitor.summary()},
+                              source="demo_execution",
+                              quality="VALID" if snapshots else "UNAVAILABLE",
+                              timestamp=snapshots[0]["timestamp"] if snapshots else None)
+
+
+@app.get("/execution/journal")
+def execution_journal(limit: int = Query(100, ge=1, le=1000), closed: bool | None = None,
+                      db: Session = Depends(get_db)) -> dict[str, Any]:
+    rows = DemoTradingRepository(db).recent_journal(limit, closed=closed)
+    items = [as_dict(row) for row in rows]
+    return dashboard_envelope({"items": items, "count": len(items)}, source="demo_execution",
+                              quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=items[0]["timestamp"] if items else None)
+
+
+@app.get("/execution/comparison")
+def execution_comparison(limit: int = Query(100, ge=1, le=1000),
+                         db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Paper vs DEMO (section 29) and the error attribution behind it (section 32)."""
+    rows = DemoTradingRepository(db).recent_comparisons(limit)
+    items = [as_dict(row) for row in rows]
+    summary = ExecutionComparator.summarize([
+        PaperDemoComparison(
+            request_id=row.request_id, symbol=row.symbol, paper_entry=row.paper_entry,
+            demo_entry=row.demo_entry, paper_exit=row.paper_exit, demo_exit=row.demo_exit,
+            entry_difference=row.entry_difference, exit_difference=row.exit_difference,
+            spread=row.spread, slippage=row.slippage, commission=row.commission,
+            swap=row.swap, pnl_difference=row.pnl_difference,
+            within_tolerance=row.within_tolerance) for row in rows])
+    return dashboard_envelope({"items": items, "count": len(items), "summary": summary},
+                              source="demo_execution",
+                              quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=items[0]["timestamp"] if items else None)
+
+
+@app.get("/execution/performance")
+def execution_performance(db: Session = Depends(get_db)) -> dict[str, Any]:
+    performance = controlled_demo_service(db).performance()
+    return dashboard_envelope(performance, source="demo_execution",
+                              quality="VALID" if performance["samples"] else "UNAVAILABLE",
+                              timestamp=performance["timestamp"])
+
+
+@app.get("/execution/emergency")
+def execution_emergency(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Report the emergency events. Reading this never triggers a shutdown."""
+    rows = DemoTradingRepository(db).recent_emergency_events(50)
+    items = [as_dict(row) for row in rows]
+    return dashboard_envelope({"items": items, "count": len(items),
+                               "positions_closed": False}, source="demo_execution",
+                              quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=items[0]["timestamp"] if items else None)
+
+
+@app.get("/dashboard/demo-execution")
+def dashboard_demo_execution(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Section 26: one panel with everything an operator needs before arming."""
+    status = controlled_demo_service(db).status()
+    return dashboard_envelope(status, source="demo_execution", quality="VALID",
+                              timestamp=status["timestamp"])
+
+
+# ------------------------- Phase 17: shadow trading and DEMO validation
+# Everything here reads and reports. The single write is the circuit-breaker
+# reset, which refuses without the full section 23 checklist. No endpoint arms a
+# mode, opens a flag or enables automation.
+
+@app.get("/validation/shadow")
+def validation_shadow(limit: int = Query(200, ge=1, le=1000), executed: bool | None = None,
+                      db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Shadow signals. `orders_sent` is 0 on every row, by construction."""
+    rows = ValidationRepository(db).recent_shadow_signals(limit, executed=executed)
+    items = [as_dict(row) for row in rows]
+    return dashboard_envelope({"items": items, "count": len(items), "orders_sent": 0},
+                              source="validation",
+                              quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=items[0]["timestamp"] if items else None)
+
+
+@app.get("/validation/shadow/outcomes")
+def validation_shadow_outcomes(limit: int = Query(500, ge=1, le=2000),
+                               db: Session = Depends(get_db)) -> dict[str, Any]:
+    rows = ValidationRepository(db).recent_shadow_outcomes(limit)
+    items = [as_dict(row) for row in rows]
+    return dashboard_envelope({"items": items, "count": len(items)}, source="validation",
+                              quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=items[0]["resolved_at"] if items else None)
+
+
+@app.get("/validation/comparison")
+def validation_comparison(limit: int = Query(200, ge=1, le=1000),
+                          db: Session = Depends(get_db)) -> dict[str, Any]:
+    """SHADOW vs DEMO, with the difference attributed rather than merely measured."""
+    repository = ValidationRepository(db)
+    items = [as_dict(row) for row in repository.recent_comparisons(limit)]
+    summary = validation_service(db).comparison_summary(limit)
+    return dashboard_envelope({"items": items, "count": len(items), "summary": summary},
+                              source="validation",
+                              quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=items[0]["timestamp"] if items else None)
+
+
+@app.get("/validation/execution-quality")
+def validation_execution_quality(db: Session = Depends(get_db)) -> dict[str, Any]:
+    service = controlled_demo_service(db)
+    rows = (db.query(ExecutionResultRecord)
+            .order_by(ExecutionResultRecord.timestamp.desc()).limit(500).all())
+    records = [{"status": row.status, "slippage": _slippage(row), "spread": None,
+                "latency_ms": None} for row in rows]
+    quality = validation_service(db).execution_quality(
+        records,
+        reconciliation_failures=service.counters.get("reconciliation_failures", 0),
+        connection_failures=0)
+    return dashboard_envelope(quality, source="validation",
+                              quality="VALID" if quality["submitted"] else "UNAVAILABLE",
+                              timestamp=quality["timestamp"])
+
+
+def _slippage(row: Any) -> float | None:
+    """Filled minus requested, when both are known. Never assumed to be zero."""
+    if row.filled_price is None or row.requested_price is None:
+        return None
+    return abs(float(row.filled_price) - float(row.requested_price))
+
+
+@app.get("/validation/signal-quality")
+def validation_signal_quality(db: Session = Depends(get_db)) -> dict[str, Any]:
+    quality = validation_service(db).signal_quality()
+    return dashboard_envelope(quality, source="validation",
+                              quality="VALID" if quality["signals"] else "UNAVAILABLE",
+                              timestamp=datetime.now(timezone.utc))
+
+
+@app.get("/validation/segments")
+def validation_segments(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Regime, session and timeframe. A cell below its floor is not evidence."""
+    segments = validation_service(db).segment_performance()
+    return dashboard_envelope(segments, source="validation", quality="VALID",
+                              timestamp=datetime.now(timezone.utc))
+
+
+@app.get("/validation/windows")
+def validation_windows(db: Session = Depends(get_db)) -> dict[str, Any]:
+    windows = validation_service(db).rolling_windows()
+    return dashboard_envelope(windows, source="validation", quality="VALID",
+                              timestamp=datetime.now(timezone.utc))
+
+
+@app.get("/validation/gates")
+def validation_gates(window: str = Query("30d"),
+                     db: Session = Depends(get_db)) -> dict[str, Any]:
+    """A failing gate reports. It never enables higher-risk execution."""
+    report = validation_service(db).performance_gates(window=window)
+    return dashboard_envelope(report, source="validation", quality="VALID",
+                              timestamp=report["timestamp"])
+
+
+@app.get("/validation/eligibility")
+def validation_eligibility(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """DEMO_AUTOMATION_ELIGIBLE. Computed, advisory, and never self-applying."""
+    settings = get_settings()
+    service = controlled_demo_service(db)
+    eligibility = validation_service(db).automation_eligibility(
+        kill_switch_engaged=service.kill_switch.engaged,
+        reconciliation_failures=service.counters.get("reconciliation_failures", 0),
+        circuit_breaker_open=circuit_breaker.open)
+    return dashboard_envelope({
+        **eligibility.as_dict(),
+        "demo_automated_execution_enabled": settings.demo_automated_execution_enabled,
+        "demo_automation_approved": settings.demo_automation_approved,
+        "execution_mode": settings.execution_mode,
+    }, source="validation", quality="VALID", timestamp=eligibility.timestamp)
+
+
+@app.get("/validation/circuit-breaker")
+def validation_circuit_breaker(db: Session = Depends(get_db)) -> dict[str, Any]:
+    events = [as_dict(row) for row in ValidationRepository(db).recent_breaker_events(50)]
+    status = circuit_breaker.status()
+    return dashboard_envelope({**status, "history": events}, source="circuit_breaker",
+                              quality="VALID", timestamp=status.get("since"))
+
+
+@app.post("/validation/circuit-breaker/reset")
+def validation_circuit_breaker_reset(payload: BreakerRecoveryPayload,
+                                     db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Section 23. Health check, risk check, account validation and a named human.
+
+    DEMO_AUTOMATED does not resume by itself: closing the breaker only removes
+    this block, and every other gate is still evaluated per order.
+    """
+    checklist = RecoveryChecklist(
+        health_check=payload.health_check, risk_check=payload.risk_check,
+        account_validation=payload.account_validation, approved_by=payload.approved_by,
+        reason=payload.reason)
+    try:
+        event = validation_service(db).reset_breaker(checklist, actor=payload.approved_by)
+    except RecoveryRefused as error:
+        raise HTTPException(status_code=409, detail={"code": "RECOVERY_INCOMPLETE",
+                                                     "missing": list(error.missing)}) from error
+    return {**event.as_dict(), "state": str(event.state),
+            "demo_automated_resumed": False}
+
+
+@app.get("/validation/review/daily")
+def validation_daily_review(db: Session = Depends(get_db)) -> dict[str, Any]:
+    service = controlled_demo_service(db)
+    review = validation_service(db).daily_review(
+        kill_switch="ENGAGED" if service.kill_switch.engaged else "RELEASED",
+        execution_failures=service.counters.get("execution_errors", 0))
+    return dashboard_envelope(review, source="validation", quality="VALID",
+                              timestamp=review["generated_at"])
+
+
+@app.get("/validation/review/weekly")
+def validation_weekly_review(db: Session = Depends(get_db)) -> dict[str, Any]:
+    review = validation_service(db).weekly_review()
+    return dashboard_envelope(review, source="validation", quality="VALID",
+                              timestamp=review["generated_at"])
+
+
+@app.get("/dashboard/validation")
+def dashboard_validation(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Section 24: shadow and DEMO side by side, plus the two stop mechanisms."""
+    settings = get_settings()
+    service = controlled_demo_service(db)
+    validation = validation_service(db)
+    shadow = validation.signal_quality()
+    demo = service.performance()
+    windows = validation.rolling_windows()
+    comparison = validation.comparison_summary()
+    quality = validation.execution_quality(
+        [{"status": row.status, "slippage": _slippage(row)} for row in
+         db.query(ExecutionResultRecord)
+         .order_by(ExecutionResultRecord.timestamp.desc()).limit(500).all()],
+        reconciliation_failures=service.counters.get("reconciliation_failures", 0))
+
+    return dashboard_envelope({
+        "system_mode": settings.execution_mode,
+        "live_trading_enabled": False,
+        "real_account_execution": False,
+        "shadow_signals": shadow["signals"],
+        "demo_trades": demo["samples"],
+        "paper_trades": len(paper_service.journals),
+        "shadow_win_rate": shadow["win_rate"],
+        "demo_win_rate": demo["win_rate"],
+        "shadow_expectancy": shadow["expectancy"],
+        "demo_expectancy": demo["expectancy"],
+        "shadow_pnl": shadow["net_pnl"],
+        "demo_pnl": demo["net_pnl"],
+        "shadow_demo_pnl_delta": _delta(demo["net_pnl"], shadow["net_pnl"]),
+        "average_slippage": quality["average_slippage"],
+        "execution_latency": quality["latency_ms"],
+        "reconciliation_status": ("FAILED" if service.counters.get("reconciliation_failures")
+                                  else "OK"),
+        "current_champion": (service.journal.entries[-1].strategy_version
+                             if service.journal.entries else None),
+        "nn_confidence": None,
+        "model_drift": None,
+        "edge_status": windows.get("edge_status"),
+        "circuit_breaker": circuit_breaker.status(),
+        "kill_switch": service.kill_switch.status(),
+        "comparison": comparison,
+        "execution_quality": quality,
+        "windows": windows.get("windows"),
+        "shadow_orders_sent": 0,
+        "timestamp": datetime.now(timezone.utc),
+    }, source="validation", quality="VALID", timestamp=datetime.now(timezone.utc))
+
+
+def _delta(left: Any, right: Any) -> float | None:
+    if left is None or right is None:
+        return None
+    return round(float(left) - float(right), 8)
+
+
+# ------------------------------------------ Phase 12: observation & validation
+# Observation mode: the system reads the live market, calculates every signal,
+# and sends zero orders. The terminal stage is always a recorded simulation.
+
+@app.get("/market/snapshot")
+def market_snapshot(symbol: str = Query(None), refresh: bool = Query(False),
+                    db: Session = Depends(get_db)) -> dict[str, Any]:
+    """One coherent view of the market: price, regime, structure, NN, strategy, execution.
+
+    `refresh=true` runs a live observation cycle; otherwise the most recent stored
+    snapshot is returned so the dashboard does not re-run the pipeline on every poll.
+    """
+    settings = get_settings()
+    target = (symbol or (settings.observation_symbol_list or ("EURUSD",))[0]).upper()
+    repository = ObservationRepository(db)
+
+    if refresh:
+        result = observation_cycle(db).run(target)
+        if result.market is not None:
+            payload = result.market.as_dict()
+            payload["observation_mode"] = settings.observation_mode
+            payload["orders_sent"] = 0
+            return dashboard_envelope(payload, source="observation", quality="VALID",
+                                      timestamp=result.timestamp)
+        return dashboard_envelope(
+            {"symbol": target, "stage": result.stage, "halted": True,
+             "reasons": list(result.reasons), "orders_sent": 0,
+             "observation_mode": settings.observation_mode,
+             "account": result.account.as_dict() if result.account else None},
+            source="observation", quality="UNAVAILABLE", timestamp=result.timestamp)
+
+    row = repository.latest_market_snapshot(target)
+    if row is None:
+        return dashboard_envelope({"symbol": target, "available": False,
+                                   "hint": "call with refresh=true to run a cycle",
+                                   "orders_sent": 0,
+                                   "observation_mode": settings.observation_mode},
+                                  source="observation", quality="UNAVAILABLE")
+    payload = dict(row.snapshot_json or {})
+    payload.update({"observation_mode": settings.observation_mode, "orders_sent": 0,
+                    "cycle_id": row.cycle_id})
+    return dashboard_envelope(payload, source="observation", quality="VALID",
+                              timestamp=row.timestamp)
+
+
+@app.get("/system/health")
+def system_health(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Per-component health: HEALTHY / DEGRADED / FAILED / UNKNOWN."""
+    settings = get_settings()
+    monitor = SystemHealthMonitor()
+
+    database_ok = check_connection()
+    account = DemoAccountValidator(settings).validate_client(mt5_client)
+    mt5_report = mt5_client.health_check(database_online=database_ok)
+
+    repository = ObservationRepository(db)
+    latest_feature = repository.latest_feature_snapshot()
+    latest_health = repository.latest_health()
+    strategy_row = StrategyRepository(db).latest_decision()
+    prediction_row = StrategyRepository(db).latest_prediction()
+
+    reported = {
+        "api": ComponentHealth.HEALTHY,
+        "database": ComponentHealth.HEALTHY if database_ok else ComponentHealth.FAILED,
+        "mt5": str(mt5_report.state),
+        "market_data": ComponentHealth.HEALTHY if account.valid else ComponentHealth.UNKNOWN,
+        "data_quality": ComponentHealth.HEALTHY if latest_feature else ComponentHealth.UNKNOWN,
+        "strategy": ComponentHealth.HEALTHY if strategy_row else ComponentHealth.UNKNOWN,
+        "nn": ComponentHealth.HEALTHY if prediction_row else ComponentHealth.UNKNOWN,
+        "risk": ComponentHealth.HEALTHY if strategy_row else ComponentHealth.UNKNOWN,
+        # Execution is intentionally disabled; that is healthy, not degraded.
+        "execution": ComponentHealth.HEALTHY,
+        "dashboard": ComponentHealth.HEALTHY,
+        "monitoring": ComponentHealth.HEALTHY,
+    }
+    details = {
+        "mt5": {"account_status": str(account.status), "server": account.as_dict()["account"]["server"]},
+        "execution": {"observation_mode": settings.observation_mode,
+                      "demo_trading_enabled": settings.demo_trading_enabled,
+                      "mt5_execution_enabled": settings.mt5_execution_enabled,
+                      "kill_switch": settings.execution_kill_switch,
+                      "automated_trading": False},
+    }
+    health = monitor.build(reported, details=details,
+                           last_error=latest_health.last_error if latest_health else None)
+    return dashboard_envelope(health.as_dict(), source="observation", quality="VALID",
+                              timestamp=health.timestamp)
+
+
+@app.get("/observation/status")
+def observation_status(db: Session = Depends(get_db)) -> dict[str, Any]:
+    settings = get_settings()
+    repository = ObservationRepository(db)
+    simulations = repository.recent_simulations(20)
+    return dashboard_envelope({
+        "observation_mode": settings.observation_mode,
+        "symbols": list(settings.observation_symbol_list),
+        "interval_seconds": settings.observation_interval_seconds,
+        "automated_trading": False,
+        "orders_sent": 0,
+        "recent_simulations": [as_dict(row) for row in simulations],
+    }, source="observation", quality="VALID" if simulations else "UNAVAILABLE",
+        timestamp=simulations[0].timestamp if simulations else None)
+
+
+@app.get("/observation/performance")
+def observation_performance(limit: int = Query(100, ge=1, le=1000),
+                            db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Forward observation data. This is NOT a backtest and NOT a realised result."""
+    rows = ObservationRepository(db).recent_performance(limit)
+    items = [as_dict(row) for row in rows]
+    return dashboard_envelope({
+        "items": items, "count": len(items), "orders_sent": 0,
+        "note": "Hypothetical forward observation only; no order was ever placed.",
+    }, source="observation", quality="VALID" if items else "UNAVAILABLE",
+        timestamp=rows[0].opened_at if rows else None)
+
+
+@app.post("/observation/cycle")
+def observation_run_cycle(symbol: str = Query(None),
+                          db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Run one observation cycle on demand. Sends nothing; records everything."""
+    settings = get_settings()
+    target = (symbol or (settings.observation_symbol_list or ("EURUSD",))[0]).upper()
+    result = observation_cycle(db).run(target)
+    return {**result.as_dict(), "observation_mode": settings.observation_mode,
+            "automated_trading": False}
+
+
+@app.get("/dashboard/observation")
+def dashboard_observation(symbol: str = Query(None),
+                          db: Session = Depends(get_db)) -> dict[str, Any]:
+    settings = get_settings()
+    target = (symbol or (settings.observation_symbol_list or ("EURUSD",))[0]).upper()
+    repository = ObservationRepository(db)
+    row = repository.latest_market_snapshot(target)
+    account = DemoAccountValidator(settings).validate_client(mt5_client)
+    snapshot = dict(row.snapshot_json or {}) if row else {}
+    return dashboard_envelope({
+        "symbol": target,
+        "observation_mode": settings.observation_mode,
+        "automated_trading": False,
+        "orders_sent": 0,
+        "account": account.as_dict(),
+        "price": snapshot.get("price", {}),
+        "spread": snapshot.get("spread", {}),
+        "session": snapshot.get("sessions", {}),
+        "regime": snapshot.get("regime", {}),
+        "timeframes": snapshot.get("timeframes", {}),
+        "structure": snapshot.get("structure", {}),
+        "liquidity": snapshot.get("liquidity", {}),
+        "indicators": snapshot.get("indicators", {}),
+        "neural_network": snapshot.get("neural_network"),
+        "strategy": snapshot.get("strategy", {}),
+        "risk": snapshot.get("risk", {}),
+        "execution": snapshot.get("execution", {}),
+        "data_quality": snapshot.get("data_quality", {}),
+        "last_error": (repository.latest_health().last_error
+                       if repository.latest_health() else None),
+    }, source="observation", quality="VALID" if row else "UNAVAILABLE",
+        timestamp=row.timestamp if row else None)
+
+
+# ------------------------------------------------------ Phase 13: AI learning
+# Read-only reporting plus two human-gated writes. Training itself is an explicit
+# job (scripts/train_forward_model.py); no endpoint fits a model.
+
+def _model_rows_to_dicts(rows) -> list[dict[str, Any]]:
+    return [as_dict(row) for row in rows]
+
+
+@app.get("/ai/models")
+def ai_models(limit: int = Query(50, ge=1, le=500),
+              db: Session = Depends(get_db)) -> dict[str, Any]:
+    rows = LearningRepository(db).recent_models(limit)
+    items = _model_rows_to_dicts(rows)
+    return dashboard_envelope({"items": items, "count": len(items)}, source="ai",
+                              quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=rows[0].training_timestamp if rows else None)
+
+
+@app.get("/ai/champion")
+def ai_champion(task: str = Query("direction"), symbol: str = Query("EURUSD"),
+                timeframe: str = Query("M5"), db: Session = Depends(get_db)) -> dict[str, Any]:
+    key = ModelTask(task=task, symbol=symbol.upper(), timeframe=timeframe.upper()).key
+    repository = LearningRepository(db)
+    champion = repository.champion(key)
+    challengers = repository.challengers(key)
+    return dashboard_envelope({
+        "task": key,
+        "champion": as_dict(champion) if champion else None,
+        "challengers": _model_rows_to_dicts(challengers),
+        "challenger_count": len(challengers),
+    }, source="ai", quality="VALID" if champion else "UNAVAILABLE",
+        timestamp=champion.training_timestamp if champion else None)
+
+
+@app.get("/ai/dataset")
+def ai_dataset(db: Session = Depends(get_db)) -> dict[str, Any]:
+    audit = LearningRepository(db).latest_dataset_audit()
+    return dashboard_envelope({"audit": as_dict(audit) if audit else None,
+                               "labelled_observations": LearningRepository(db).labelled_count()},
+                              source="ai", quality="VALID" if audit else "UNAVAILABLE",
+                              timestamp=audit.created_at if audit else None)
+
+
+@app.get("/ai/drift")
+def ai_drift(limit: int = Query(50, ge=1, le=500),
+             db: Session = Depends(get_db)) -> dict[str, Any]:
+    rows = LearningRepository(db).recent_drift(limit)
+    items = _model_rows_to_dicts(rows)
+    return dashboard_envelope({
+        "items": items, "count": len(items),
+        "flagged": sum(1 for row in rows if row.flagged),
+        # Constant: drift detection never triggers retraining or promotion.
+        "action": "FLAG_ONLY",
+    }, source="ai", quality="VALID" if items else "UNAVAILABLE",
+        timestamp=rows[0].timestamp if rows else None)
+
+
+@app.get("/ai/retraining")
+def ai_retraining(limit: int = Query(50, ge=1, le=500),
+                  db: Session = Depends(get_db)) -> dict[str, Any]:
+    rows = LearningRepository(db).recent_retraining_requests(limit)
+    items = _model_rows_to_dicts(rows)
+    return dashboard_envelope({"items": items, "count": len(items),
+                               "auto_trains": False, "auto_promotes": False},
+                              source="ai", quality="VALID" if items else "UNAVAILABLE",
+                              timestamp=rows[0].created_at if rows else None)
+
+
+@app.get("/ai/thresholds")
+def ai_thresholds() -> dict[str, Any]:
+    thresholds = ConfidenceThresholds.from_config()
+    return dashboard_envelope({**thresholds.as_dict(),
+                               "note": "validate thresholds out-of-sample before trusting them"},
+                              source="ai", quality="VALID",
+                              timestamp=datetime.now(timezone.utc))
+
+
+@app.post("/ai/retraining/request")
+def ai_request_retraining(payload: RetrainingPayload,
+                          db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Records that retraining is warranted. Does NOT train and does NOT promote."""
+    policy = RetrainingPolicy(get_settings())
+    request = policy.evaluate(new_observations=payload.new_observations, manual=True)
+    LearningRepository(db).save_retraining_request(request)
+    logger.info("retraining requested: %s", payload.reason)
+    return {**request.as_dict(), "reason": payload.reason,
+            "note": "a request is not a training run; run scripts/train_forward_model.py"}
+
+
+@app.post("/ai/models/{model_id}/approve")
+def ai_approve_model(model_id: str, payload: ApprovalPayload,
+                     db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Human approval gate. Promotion happens only here, and only with a named approver."""
+    repository = LearningRepository(db)
+    row = repository.get_model(model_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown model")
+
+    registry = ModelRegistry(repository=repository)
+    record = _record_from_row(row)
+    registry.register(record)
+    incumbent = repository.champion(row.task_key)
+    if incumbent is not None and incumbent.model_id != model_id:
+        registry.register(_record_from_row(incumbent))
+
+    try:
+        if record.state is ModelState.EXPERIMENTAL:
+            registry.transition(model_id, ModelState.VALIDATED, note="approved for validation")
+        promoted = registry.promote(
+            model_id, ApprovalToken(payload.approved_by, payload.reason),
+            force=incumbent is None)
+    except PromotionRefused as error:
+        return {"model_id": model_id, "promoted": False, "reason": str(error),
+                "comparison": registry.evaluate_promotion(model_id).as_dict()}
+
+    return {"model_id": model_id, "promoted": True, "state": str(promoted.state),
+            "approved_by": payload.approved_by,
+            "comparison": registry.evaluate_promotion(model_id).as_dict()}
+
+
+def _record_from_row(row) -> ModelRecord:
+    payload = dict(row.record_json or {})
+    task = payload.get("task") or {}
+    return ModelRecord(
+        model_id=row.model_id, model_version=row.model_version,
+        task=ModelTask(task.get("task", row.task), task.get("symbol", row.symbol),
+                       task.get("timeframe", row.timeframe)),
+        feature_version=row.feature_version, label_version=row.label_version,
+        training_dataset_version=row.training_dataset_version,
+        preprocessing_version=row.preprocessing_version,
+        state=ModelState(row.state), training_timestamp=row.training_timestamp,
+        validation_metrics=payload.get("validation_metrics", {}),
+        test_metrics=payload.get("test_metrics", {}),
+        walk_forward_metrics=payload.get("walk_forward_metrics", {}),
+        regime_metrics=payload.get("regime_metrics", {}),
+        session_metrics=payload.get("session_metrics", {}),
+        baseline_comparison=payload.get("baseline_comparison", {}),
+        calibration=payload.get("calibration", {}),
+        explainability=payload.get("explainability", {}),
+        edge_verdict=row.edge_verdict, artifact_path=row.artifact_path)
+
+
+@app.get("/dashboard/ai")
+def dashboard_ai(task: str = Query("direction"), symbol: str = Query("EURUSD"),
+                 timeframe: str = Query("M5"), db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = LearningRepository(db)
+    key = ModelTask(task=task, symbol=symbol.upper(), timeframe=timeframe.upper()).key
+    champion = repository.champion(key)
+    challengers = repository.challengers(key)
+    audit = repository.latest_dataset_audit()
+    drift = repository.recent_drift(20)
+    payload = dict(champion.record_json or {}) if champion else {}
+    test_metrics = payload.get("test_metrics", {})
+    walk_forward = payload.get("walk_forward_metrics", {})
+    prediction = StrategyRepository(db).latest_prediction()
+
+    return dashboard_envelope({
+        "task": key,
+        "current_model": champion.model_id if champion else None,
+        "model_version": champion.model_version if champion else None,
+        "feature_version": champion.feature_version if champion else None,
+        "model_status": champion.state if champion else "NONE",
+        "champion": as_dict(champion) if champion else None,
+        "challenger": as_dict(challengers[0]) if challengers else None,
+        "challenger_count": len(challengers),
+        "edge": champion.edge_verdict if champion else "NO_EDGE",
+        "nn": (prediction.prediction_json if prediction else None),
+        "expected_return": test_metrics.get("expectancy"),
+        "expected_mfe": test_metrics.get("mfe"),
+        "expected_mae": test_metrics.get("mae"),
+        "walk_forward_score": walk_forward.get("mean_accuracy"),
+        "walk_forward_stability": walk_forward.get("stability"),
+        "dataset_size": audit.row_count if audit else 0,
+        "dataset_id": audit.dataset_id if audit else None,
+        "last_training": champion.training_timestamp if champion else None,
+        "last_validation": payload.get("validation_metrics", {}).get("samples"),
+        "drift_flagged": sum(1 for row in drift if row.flagged),
+        "drift_action": "FLAG_ONLY",
+        "explainability": payload.get("explainability", {}).get("groups", [])[:5],
+        "thresholds": ConfidenceThresholds.from_config().as_dict(),
+        "auto_promote": False,
+        "online_learning": False,
+    }, source="ai", quality="VALID" if champion else "UNAVAILABLE",
+        timestamp=champion.training_timestamp if champion else None)
+
+
+# ------------------------------------ Phase 14: forward observation and learning
+# Read-only. The 24/7 driver runs as a separate process
+# (scripts/run_observation_driver.py); the API reports what it recorded and adds
+# no write route, so the sanctioned-writes invariant is unchanged.
+
+FORWARD_WINDOW_DAYS = 90
+
+
+def _forward_entries(db: Session, *, days: int = FORWARD_WINDOW_DAYS,
+                     limit: int = 5000) -> list[Any]:
+    """Join outcomes back to their observations so accuracy can be measured."""
+    from ai.performance.rolling import PerformanceEntry
+
+    repository = ForwardObservationRepository(db)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    entries: list[Any] = []
+    for row in repository.outcomes_since(since, limit=limit):
+        observation = repository.get_observation(row.observation_id)
+        payload = dict(row.outcome_json or {})
+        actual = payload.get("actual_direction")
+        predicted = (observation.direction if observation else row.direction) or ""
+        correct = None
+        if actual:
+            predicted_up = predicted.upper() in {"BUY", "LONG", "UP"}
+            predicted_down = predicted.upper() in {"SELL", "SHORT", "DOWN"}
+            if predicted_up or predicted_down:
+                correct = actual == ("UP" if predicted_up else "DOWN")
+        entries.append(PerformanceEntry(
+            observation_id=row.observation_id, resolved_at=row.resolved_at,
+            net_pnl=float(row.net_hypothetical_pnl or 0.0), mae=row.mae, mfe=row.mfe,
+            correct=correct,
+            confidence=(observation.nn_confidence if observation else None),
+            spread=row.spread, regime=row.regime, session=row.session,
+            timeframe=row.timeframe))
+    return entries
+
+
+@app.get("/observation/driver")
+def observation_driver_status(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Configured schedule plus what the loop has actually recorded."""
+    from observation.driver import ALLOWED_INTERVALS, DriverConfig
+
+    settings = get_settings()
+    config = DriverConfig.from_settings(settings)
+    repository = ForwardObservationRepository(db)
+    counts = repository.status_counts()
+    recent = repository.recent_observations(1)
+    return {
+        "enabled": settings.observation_driver_enabled,
+        "observation_mode": settings.observation_mode,
+        "config": config.as_dict(),
+        "allowed_intervals": list(ALLOWED_INTERVALS),
+        "cycles_per_minute": round(60.0 / max(config.interval_seconds, 1), 4),
+        "status_counts": counts,
+        "observations": sum(counts.values()),
+        "last_observation": recent[0].timestamp if recent else None,
+        "automated_trading": False,
+        "orders_sent": 0,
+    }
+
+
+@app.get("/observation/observations")
+def observation_list(limit: int = Query(100, ge=1, le=500),
+                     db: Session = Depends(get_db)) -> dict[str, Any]:
+    rows = ForwardObservationRepository(db).recent_observations(limit)
+    return {"items": [as_dict(row) for row in rows], "count": len(rows),
+            "evidence": "FORWARD_OBSERVATION"}
+
+
+@app.get("/observation/outcomes")
+def observation_outcomes(limit: int = Query(100, ge=1, le=500),
+                         db: Session = Depends(get_db)) -> dict[str, Any]:
+    rows = ForwardObservationRepository(db).recent_outcomes(limit)
+    return {"items": [as_dict(row) for row in rows], "count": len(rows),
+            "primary_metric": "net_hypothetical_pnl", "evidence": "FORWARD_OBSERVATION"}
+
+
+@app.get("/ai/performance")
+def ai_performance(db: Session = Depends(get_db)) -> dict[str, Any]:
+    from ai.performance.rolling import RollingPerformance
+
+    entries = _forward_entries(db)
+    summary = RollingPerformance().summary(entries, now=datetime.now(timezone.utc))
+    return {**summary, "evidence": "FORWARD_OBSERVATION", "backtest": False}
+
+
+@app.get("/ai/learning/segments")
+def ai_learning_segments(db: Session = Depends(get_db)) -> dict[str, Any]:
+    from ai.performance.segments import ForwardSegmentLearner
+
+    entries = _forward_entries(db)
+    return {"samples": len(entries), "evidence": "FORWARD_OBSERVATION",
+            **ForwardSegmentLearner().all_dimensions(entries)}
+
+
+@app.get("/ai/errors")
+def ai_errors(limit: int = Query(200, ge=1, le=1000),
+              db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = ForwardObservationRepository(db)
+    rows = repository.recent_errors(limit)
+    high = [row for row in rows if row.high_confidence_failure]
+    by_class: dict[str, int] = {}
+    for row in rows:
+        by_class[row.error_class] = by_class.get(row.error_class, 0) + 1
+    return {"items": [as_dict(row) for row in rows], "count": len(rows),
+            "by_class": by_class, "high_confidence_failures": len(high),
+            "high_confidence_threshold":
+                float(load_yaml().get("phase_14", {}).get("high_confidence_threshold", 0.75))}
+
+
+@app.get("/ai/edge")
+def ai_edge(symbol: str = Query(None), db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = ForwardObservationRepository(db)
+    latest = repository.latest_edge(symbol)
+    return {
+        "verdict": latest.verdict if latest else "INSUFFICIENT_DATA",
+        "samples": latest.samples if latest else 0,
+        "evidence": latest.evidence if latest else "FORWARD_OBSERVATION",
+        "latest": as_dict(latest) if latest else None,
+        "history": [as_dict(row) for row in repository.recent_edge(20)],
+        "required_baselines": list(EDGE_REQUIRED_BASELINES),
+        "backtest_accepted": False,
+    }
+
+
+@app.get("/ai/training/runs")
+def ai_training_runs(limit: int = Query(20, ge=1, le=200),
+                     db: Session = Depends(get_db)) -> dict[str, Any]:
+    rows = ForwardObservationRepository(db).recent_training_runs(limit)
+    return {"items": [as_dict(row) for row in rows], "count": len(rows),
+            "automatic_training": False, "promotion_requires_approval": True}
+
+
+@app.get("/dashboard/forward")
+def dashboard_forward(task: str = Query("direction"), symbol: str = Query("EURUSD"),
+                      timeframe: str = Query("M5"),
+                      db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Section 25: one payload for the forward observation panel."""
+    from ai.performance.rolling import RollingPerformance
+    from observation.driver import DriverConfig
+
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    forward = ForwardObservationRepository(db)
+    learning = LearningRepository(db)
+    observations = ObservationRepository(db)
+
+    config = DriverConfig.from_settings(settings)
+    counts = forward.status_counts()
+    labelled = counts.get("LABELED", 0) + counts.get("DATASET_READY", 0)
+    unlabelled = counts.get("OBSERVING", 0) + counts.get("HORIZON_REACHED", 0)
+    failed = sum(count for status, count in counts.items()
+                 if status in {"DATA_INVALID", "MODEL_ERROR", "CALCULATION_ERROR", "TIMEOUT"})
+
+    recent = forward.recent_observations(1)
+    successful = [row for row in forward.recent_observations(200)
+                  if row.status not in {"DATA_INVALID", "MODEL_ERROR",
+                                        "CALCULATION_ERROR", "TIMEOUT"}]
+
+    key = ModelTask(task=task, symbol=symbol.upper(), timeframe=timeframe.upper()).key
+    champion = learning.champion(key)
+    challengers = learning.challengers(key)
+    audit = learning.latest_dataset_audit()
+    drift = learning.recent_drift(20)
+
+    windows = RollingPerformance().evaluate(_forward_entries(db), now=now)
+    errors = forward.recent_errors(500)
+    edge = forward.latest_edge(symbol.upper())
+    snapshot = dict((observations.latest_market_snapshot(symbol.upper()) or
+                     type("Empty", (), {"snapshot_json": {}})()).snapshot_json or {})
+    champion_payload = dict(champion.record_json or {}) if champion else {}
+
+    return dashboard_envelope({
+        "symbol": symbol.upper(),
+        # driver
+        "driver_enabled": settings.observation_driver_enabled,
+        "observation_cycles": sum(counts.values()),
+        "cycles_per_minute": round(60.0 / max(config.interval_seconds, 1), 4),
+        "interval_seconds": config.interval_seconds,
+        "last_cycle": recent[0].timestamp if recent else None,
+        "last_successful_cycle": successful[0].timestamp if successful else None,
+        "failed_cycles": failed,
+        "status_counts": counts,
+        # dataset
+        "dataset_size": audit.row_count if audit else 0,
+        "labeled_observations": labelled,
+        "unlabeled_observations": unlabelled,
+        # models
+        "current_champion": champion.model_id if champion else None,
+        "current_challenger": challengers[0].model_id if challengers else None,
+        "model_accuracy": champion_payload.get("test_metrics", {}).get("accuracy"),
+        "model_calibration": champion_payload.get("calibration", {}),
+        # forward performance
+        "performance_7d": windows["7d"].as_dict(),
+        "performance_30d": windows["30d"].as_dict(),
+        "performance_90d": windows["90d"].as_dict(),
+        # edge, drift, failures
+        "edge_status": edge.verdict if edge else "INSUFFICIENT_DATA",
+        "edge_samples": edge.samples if edge else 0,
+        "model_drift": sum(1 for row in drift if row.flagged),
+        "drift_action": "FLAG_ONLY",
+        "high_confidence_failures": sum(1 for row in errors if row.high_confidence_failure),
+        # current market view
+        "current_regime": (snapshot.get("regime") or {}).get("regime", "UNKNOWN"),
+        "current_session": (snapshot.get("sessions") or {}).get("session", "UNKNOWN"),
+        "nn_prediction": snapshot.get("neural_network"),
+        "strategy": snapshot.get("strategy", {}),
+        "risk": snapshot.get("risk", {}),
+        "execution": snapshot.get("execution", {}),
+        # invariants
+        "evidence": "FORWARD_OBSERVATION",
+        "automatic_training": False,
+        "automated_trading": False,
+        "orders_sent": 0,
+    }, source="forward_observation",
+        quality="VALID" if sum(counts.values()) else "UNAVAILABLE",
+        timestamp=recent[0].timestamp if recent else None)
+
+
+# ------------------------------------------------ Phase 15: AI research lab
+# Read-only. Studies run as a separate job (scripts/run_research_lab.py) and
+# write to reports/research/; the API reports what was recorded. No write route
+# is added, so the sanctioned-writes invariant is unchanged.
+
+
+def _research_observations(db: Session, *, days: int = 180,
+                           limit: int = 20000) -> list[Any]:
+    """Forward outcomes joined to their observations, as research rows."""
+    from research.models import ResearchObservation
+
+    forward = ForwardObservationRepository(db)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    rows: list[Any] = []
+    for row in forward.outcomes_since(since, limit=limit):
+        observation = forward.get_observation(row.observation_id)
+        overrides: dict[str, Any] = {}
+        if observation is not None:
+            overrides["confidence"] = observation.nn_confidence
+            overrides["strategy_id"] = observation.strategy
+        rows.append(ResearchObservation.from_row(row, **overrides))
+    return rows
+
+
+@app.get("/research/strategies")
+def research_strategies(status: str = Query(None),
+                        limit: int = Query(200, ge=1, le=1000),
+                        db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = ResearchRepository(db)
+    rows = repository.strategies(status.upper() if status else None, limit)
+    return {"items": [as_dict(row) for row in rows], "count": len(rows),
+            "by_status": repository.strategy_counts(),
+            "promotion_requires_approval": True, "executes": False}
+
+
+@app.get("/research/experiments")
+def research_experiments(limit: int = Query(200, ge=1, le=1000),
+                         db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = ResearchRepository(db)
+    rows = repository.experiments(limit)
+    return {"items": [as_dict(row) for row in rows], "count": len(rows),
+            "experiment_count": repository.experiment_count(),
+            "holdout_usage": repository.holdout_usage(),
+            "evidence": "FORWARD_OBSERVATION"}
+
+
+@app.get("/research/findings")
+def research_findings(study: str = Query(None),
+                      limit: int = Query(200, ge=1, le=1000),
+                      db: Session = Depends(get_db)) -> dict[str, Any]:
+    rows = ResearchRepository(db).findings(study, limit)
+    return {"items": [as_dict(row) for row in rows], "count": len(rows)}
+
+
+@app.get("/research/champion")
+def research_champion(db: Session = Depends(get_db)) -> dict[str, Any]:
+    from research.champion import rejection_criteria
+
+    repository = ResearchRepository(db)
+    champion = repository.champion_strategy()
+    challengers = [row for row in repository.strategies()
+                   if row.status in {"VALIDATED", "TESTING"}]
+    return {
+        "champion": as_dict(champion) if champion else None,
+        "challengers": [as_dict(row) for row in challengers],
+        "challenger_count": len(challengers),
+        "promoted_automatically": False, "requires_human_approval": True,
+        **rejection_criteria(),
+    }
+
+
+@app.get("/dashboard/research")
+def dashboard_research(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Section 23: one payload for the research panel."""
+    from research.champion import rejection_criteria
+
+    repository = ResearchRepository(db)
+    forward = ForwardObservationRepository(db)
+    learning = LearningRepository(db)
+
+    champion = repository.champion_strategy()
+    challengers = [row for row in repository.strategies()
+                   if row.status in {"VALIDATED", "TESTING"}]
+    best = repository.best_experiment()
+    edge = forward.latest_edge()
+    errors = forward.recent_errors(500)
+    model_champion = learning.champion(
+        ModelTask(task="direction", symbol="EURUSD", timeframe="M5").key)
+
+    def finding(study: str) -> dict[str, Any]:
+        row = repository.latest_finding(study)
+        if row is None:
+            return {"verdict": "NOT_EVALUATED", "sample_size": 0, "significant": False}
+        return {"verdict": row.verdict, "sample_size": row.sample_size,
+                "significant": row.significant, "effect_size": row.effect_size,
+                "subject": row.subject}
+
+    experiment_count = repository.experiment_count()
+    report_payload = (repository.latest_finding("edge") or None)
+    edge_report = dict(getattr(report_payload, "finding_json", {}) or {})
+
+    return dashboard_envelope({
+        # champions
+        "champion_strategy": champion.key if champion else None,
+        "champion_model": model_champion.model_id if model_champion else None,
+        "challenger": challengers[0].key if challengers else None,
+        "challenger_count": len(challengers),
+        # experiments
+        "experiment_count": experiment_count,
+        "best_strategy": best.name if best else None,
+        "best_strategy_expectancy": best.expectancy if best else None,
+        # matrices
+        "best_regime": finding("regime_matrix").get("subject"),
+        "best_session": finding("session_matrix").get("subject"),
+        "best_timeframe": finding("timeframe_matrix").get("subject"),
+        # value studies
+        "nn_value": finding("nn_value"),
+        "indicator_value": finding("indicator_value"),
+        "dca_value": finding("dca"),
+        "time_exit_value": finding("time_exit"),
+        # rigour
+        "edge_status": edge.verdict if edge else "INSUFFICIENT_DATA",
+        "confidence_interval": edge_report.get("confidence_interval")
+        or (dict(edge.report_json or {}).get("metrics", {}).get("confidence_interval")
+            if edge else None),
+        "sample_size": edge.samples if edge else 0,
+        "maximum_drawdown": best.maximum_drawdown if best else None,
+        "high_confidence_failures": sum(1 for row in errors
+                                        if row.high_confidence_failure),
+        "holdout_usage": repository.holdout_usage(),
+        "multiple_testing_note": ("Apparent edge grows with the number of strategies "
+                                  "tried; the ledger records every one."),
+        # invariants
+        "evidence": "FORWARD_OBSERVATION",
+        "promoted_automatically": False,
+        "requires_human_approval": True,
+        "automated_trading": False,
+        "orders_sent": 0,
+        "rejection_criteria": rejection_criteria()["criteria"],
+    }, source="research",
+        quality="VALID" if experiment_count else "UNAVAILABLE",
+        timestamp=best.created_at if best else None)
 
 
 @app.get("/market/latest/{symbol}")

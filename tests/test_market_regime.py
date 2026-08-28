@@ -235,3 +235,92 @@ def test_missing_m5_m1_are_explicit_and_regime_api_uses_database(client, db_sess
 def test_strategy_regime_boundary_does_not_accept_raw_candles():
     parameters = tuple(inspect.signature(RegimeDrivenStrategy.evaluate).parameters)
     assert parameters == ("self", "snapshot")
+
+
+# ------------------------------------------------- Phase 12: unified regime
+# The Phase 3 tests above cover the intelligence engine's bias. These cover the
+# Phase 12 six-state regime and, above all, the higher-timeframe authority rule.
+
+def _evidence(**timeframes):
+    from observation.regime import TimeframeEvidence
+
+    built = {}
+    for name, values in timeframes.items():
+        built[name] = (TimeframeEvidence(name, False) if values is None
+                       else TimeframeEvidence(name, True, **values))
+    return built
+
+
+def test_phase12_all_timeframes_bullish_gives_strong_bull():
+    from observation.regime import MarketRegime, MarketRegimeEngine
+
+    evidence = _evidence(
+        D1={"trend": "BULLISH", "structure": "HH", "bos": "BULLISH"},
+        H4={"trend": "BULLISH", "structure": "HL", "bos": "BULLISH"},
+        H1={"trend": "BULLISH", "structure": "HH", "bos": "BULLISH"},
+        M30={"trend": "BULLISH", "structure": "HH"},
+        M15={"trend": "BULLISH", "structure": "HH"},
+        M5={"trend": "BULLISH", "structure": "HH"})
+    assert MarketRegimeEngine().evaluate(evidence).regime is MarketRegime.STRONG_BULL
+
+
+def test_phase12_all_timeframes_bearish_gives_strong_bear():
+    from observation.regime import MarketRegime, MarketRegimeEngine
+
+    evidence = _evidence(
+        D1={"trend": "BEARISH", "structure": "LL", "bos": "BEARISH"},
+        H4={"trend": "BEARISH", "structure": "LH", "bos": "BEARISH"},
+        H1={"trend": "BEARISH", "structure": "LL", "bos": "BEARISH"},
+        M30={"trend": "BEARISH"}, M15={"trend": "BEARISH"}, M5={"trend": "BEARISH"})
+    assert MarketRegimeEngine().evaluate(evidence).regime is MarketRegime.STRONG_BEAR
+
+
+def test_phase12_non_directional_higher_timeframes_give_range():
+    from observation.regime import MarketRegime, MarketRegimeEngine
+
+    evidence = _evidence(D1={"trend": "RANGING"}, H4={"trend": "RANGING"},
+                         H1={"trend": "RANGING"}, M30=None, M15=None, M5=None)
+    assert MarketRegimeEngine().evaluate(evidence).regime is MarketRegime.RANGE
+
+
+def test_phase12_m5_alone_can_never_set_the_regime():
+    """The core Phase 12 authority rule (section 14)."""
+    from observation.regime import MarketRegime, MarketRegimeEngine
+
+    evidence = _evidence(D1=None, H4=None, H1=None, M30=None, M15=None,
+                         M5={"trend": "BULLISH", "structure": "HH", "bos": "BULLISH"})
+    result = MarketRegimeEngine().evaluate(evidence)
+    assert result.regime is MarketRegime.UNKNOWN
+    assert "NO_HIGHER_TIMEFRAME_EVIDENCE" in result.reasons
+
+
+def test_phase12_all_lower_timeframes_together_cannot_override_absent_htf():
+    from observation.regime import MarketRegime, MarketRegimeEngine
+
+    evidence = _evidence(D1=None, H4=None, H1=None,
+                         M30={"trend": "BEARISH", "structure": "LL", "bos": "BEARISH"},
+                         M15={"trend": "BEARISH", "structure": "LL", "bos": "BEARISH"},
+                         M5={"trend": "BEARISH", "structure": "LL", "bos": "BEARISH"})
+    assert MarketRegimeEngine().evaluate(evidence).regime is MarketRegime.UNKNOWN
+
+
+def test_phase12_lower_timeframe_conflict_downgrades_but_keeps_htf_direction():
+    from observation.regime import MarketRegime, MarketRegimeEngine
+
+    evidence = _evidence(
+        D1={"trend": "BULLISH", "structure": "HH", "bos": "BULLISH"},
+        H4={"trend": "BULLISH", "structure": "HL", "bos": "BULLISH"},
+        H1={"trend": "BULLISH", "structure": "HH", "bos": "BULLISH"},
+        M30={"trend": "BEARISH", "structure": "LL"},
+        M15={"trend": "BEARISH", "structure": "LL"},
+        M5={"trend": "BEARISH", "structure": "LL"})
+    result = MarketRegimeEngine().evaluate(evidence)
+    assert result.regime is MarketRegime.BULL, "direction stays with the higher timeframes"
+    assert result.conflict and "LTF_CONFLICTS_WITH_HTF" in result.reasons
+
+
+def test_phase12_every_state_is_reachable_and_reported():
+    from observation.regime import MarketRegime
+
+    assert {str(state) for state in MarketRegime} == {
+        "STRONG_BULL", "BULL", "RANGE", "BEAR", "STRONG_BEAR", "UNKNOWN"}

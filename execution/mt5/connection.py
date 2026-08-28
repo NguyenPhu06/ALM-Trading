@@ -56,6 +56,22 @@ class TerminalInfo:
     company: str | None = None
     path: str | None = None
     build: int | None = None
+    # Phase 12: terminal-level permissions. `trade_allowed` is the terminal's own
+    # AutoTrading switch; `tradeapi_disabled` means the API is barred entirely.
+    trade_allowed: bool | None = None
+    tradeapi_disabled: bool | None = None
+
+    @property
+    def permissions_known(self) -> bool:
+        return self.trade_allowed is not None and self.tradeapi_disabled is not None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "available": self.available, "initialized": self.initialized,
+            "connected": self.connected, "name": self.name, "company": self.company,
+            "path": self.path, "build": self.build, "trade_allowed": self.trade_allowed,
+            "tradeapi_disabled": self.tradeapi_disabled,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +150,8 @@ class MT5Connection:
             True, True, bool(getattr(info, "connected", False)),
             name=getattr(info, "name", None), company=getattr(info, "company", None),
             path=getattr(info, "path", None), build=getattr(info, "build", None),
+            trade_allowed=getattr(info, "trade_allowed", None),
+            tradeapi_disabled=getattr(info, "tradeapi_disabled", None),
         )
 
     # -------------------------------------------------------------- lifecycle

@@ -647,6 +647,667 @@ class KillSwitchEventRecord(Base):
     event_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
+# ------------------------------------------- Phase 12 observation / validation
+# Forward-observation records. Nothing here implies an order was ever placed:
+# execution_simulations carries orders_sent, which is always 0 in Phase 12.
+
+
+class ObservationMarketSnapshotRecord(Base):
+    __tablename__ = "observation_market_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cycle_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    regime: Mapped[str | None] = mapped_column(String(16))
+    session: Mapped[str | None] = mapped_column(String(32))
+    mid_price: Mapped[float | None] = mapped_column(Float)
+    spread: Mapped[float | None] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="mt5")
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class FeatureSnapshotRecord(Base):
+    __tablename__ = "feature_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cycle_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    regime: Mapped[str | None] = mapped_column(String(16))
+    signal: Mapped[str | None] = mapped_column(String(16))
+    feature_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="mt5")
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ExecutionSimulationRecord(Base):
+    __tablename__ = "execution_simulations"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    simulation_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    cycle_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    signal: Mapped[str] = mapped_column(String(16), nullable=False)
+    risk: Mapped[str] = mapped_column(String(16), nullable=False)
+    execution: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(64))
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    observation_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    orders_sent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    simulation_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class SystemHealthRecord(Base):
+    __tablename__ = "system_health"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    cycle_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    health_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class MT5HealthEventRecord(Base):
+    __tablename__ = "mt5_health_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    login_masked: Mapped[str | None] = mapped_column(String(32))
+    broker: Mapped[str | None] = mapped_column(String(64))
+    server: Mapped[str | None] = mapped_column(String(128))
+    account_type: Mapped[str | None] = mapped_column(String(16))
+    terminal_build: Mapped[int | None] = mapped_column(Integer)
+    reasons: Mapped[str | None] = mapped_column(Text)
+    event_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ObservationPerformanceRecord(Base):
+    __tablename__ = "observation_performance"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Phase 13: an observation is the unit a label is later attached to.
+    observation_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    cycle_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    signal: Mapped[str] = mapped_column(String(16), nullable=False)
+    entry: Mapped[float] = mapped_column(Float, nullable=False)
+    exit_price: Mapped[float | None] = mapped_column(Float)
+    duration_seconds: Mapped[float | None] = mapped_column(Float)
+    mae: Mapped[float | None] = mapped_column(Float)
+    mfe: Mapped[float | None] = mapped_column(Float)
+    hypothetical_pnl: Mapped[float | None] = mapped_column(Float)
+    spread: Mapped[float | None] = mapped_column(Float)
+    session: Mapped[str | None] = mapped_column(String(32))
+    regime: Mapped[str | None] = mapped_column(String(16))
+    nn_confidence: Mapped[float | None] = mapped_column(Float)
+    strategy_confidence: Mapped[float | None] = mapped_column(Float)
+    dca_state: Mapped[str | None] = mapped_column(String(32))
+    future_price: Mapped[float | None] = mapped_column(Float)
+    future_return: Mapped[float | None] = mapped_column(Float)
+    nn_probability: Mapped[float | None] = mapped_column(Float)
+    strategy_decision: Mapped[str | None] = mapped_column(String(24))
+    horizon: Mapped[str | None] = mapped_column(String(16))
+    label_version: Mapped[str | None] = mapped_column(String(64))
+    # Forward observation, never a backtest and never a real fill.
+    observed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    record_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+# ------------------------------------------------ Phase 13 learning pipeline
+# Metadata only. Model artifacts live on disk under phase_13.artifacts_path and
+# are gitignored; no table here stores a binary or a credential.
+
+
+class DatasetAuditRecord(Base):
+    __tablename__ = "dataset_audits"
+    dataset_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    feature_version: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    label_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    preprocessing_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    horizon: Mapped[str | None] = mapped_column(String(16))
+    start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    symbols: Mapped[str] = mapped_column(String(255), nullable=False)
+    timeframes: Mapped[str] = mapped_column(String(255), nullable=False)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    missing_values: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duplicate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    class_distribution: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    audit_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ModelRegistryRecord(Base):
+    __tablename__ = "model_registry"
+    model_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    model_version: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    task_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    task: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    timeframe: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    feature_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    label_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    training_dataset_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    preprocessing_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    training_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    edge_verdict: Mapped[str] = mapped_column(String(24), nullable=False, default="NO_EDGE")
+    artifact_path: Mapped[str | None] = mapped_column(String(512))
+    approved_by: Mapped[str | None] = mapped_column(String(128))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    record_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ModelDriftEventRecord(Base):
+    __tablename__ = "model_drift_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    model_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    metric: Mapped[float] = mapped_column(Float, nullable=False)
+    threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    flagged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Constant "FLAG_ONLY": detection never triggers retraining or promotion.
+    action: Mapped[str] = mapped_column(String(24), nullable=False, default="FLAG_ONLY")
+    detail: Mapped[str | None] = mapped_column(Text)
+    event_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class RetrainingRequestRecord(Base):
+    __tablename__ = "retraining_requests"
+    request_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    triggers: Mapped[str] = mapped_column(String(255), nullable=False)
+    reasons: Mapped[str | None] = mapped_column(Text)
+    approved_by: Mapped[str | None] = mapped_column(String(128))
+    model_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    request_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+# ------------------------------------------- Phase 14 forward observation loop
+# Records of what the loop observed and concluded. No table here holds an order,
+# a broker ticket, a credential or a model binary.
+
+
+class ObservationRecord(Base):
+    __tablename__ = "observations"
+    observation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Deterministic: sha256(symbol|timeframe|candle). A restart reproduces it, so
+    # re-running the same candle is a duplicate rather than a second observation.
+    cycle_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    timeframe: Mapped[str] = mapped_column(String(16), nullable=False)
+    entry_price: Mapped[float | None] = mapped_column(Float)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False, default="WAIT")
+    strategy: Mapped[str | None] = mapped_column(String(32))
+    market_regime: Mapped[str | None] = mapped_column(String(24))
+    session: Mapped[str | None] = mapped_column(String(32))
+    feature_version: Mapped[str | None] = mapped_column(String(64))
+    model_version: Mapped[str | None] = mapped_column(String(64))
+    nn_confidence: Mapped[float | None] = mapped_column(Float)
+    risk_state: Mapped[str | None] = mapped_column(String(16))
+    observation_horizon: Mapped[str] = mapped_column(String(16), nullable=False, default="1h")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    observation_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ObservationOutcomeRecord(Base):
+    __tablename__ = "observation_outcomes"
+    observation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    horizon: Mapped[str] = mapped_column(String(16), nullable=False)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False)
+    future_price: Mapped[float] = mapped_column(Float, nullable=False)
+    future_return: Mapped[float] = mapped_column(Float, nullable=False)
+    mfe: Mapped[float | None] = mapped_column(Float)
+    mae: Mapped[float | None] = mapped_column(Float)
+    hypothetical_pnl: Mapped[float | None] = mapped_column(Float)
+    # The primary performance metric (section 7): gross is never the headline.
+    net_hypothetical_pnl: Mapped[float] = mapped_column(Float, nullable=False)
+    estimated_cost: Mapped[float | None] = mapped_column(Float)
+    spread: Mapped[float | None] = mapped_column(Float)
+    holding_time: Mapped[float | None] = mapped_column(Float)
+    resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    regime: Mapped[str | None] = mapped_column(String(24))
+    session: Mapped[str | None] = mapped_column(String(32))
+    timeframe: Mapped[str | None] = mapped_column(String(16))
+    label_version: Mapped[str | None] = mapped_column(String(64))
+    # Section 24: never a backtest, never an executed fill.
+    evidence: Mapped[str] = mapped_column(String(32), nullable=False, default="FORWARD_OBSERVATION")
+    outcome_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ModelErrorRecord(Base):
+    __tablename__ = "model_errors"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    observation_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    model_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    predicted: Mapped[str] = mapped_column(String(16), nullable=False)
+    actual: Mapped[str] = mapped_column(String(16), nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    error_class: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    tags: Mapped[str | None] = mapped_column(String(255))
+    high_confidence_failure: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    net_pnl: Mapped[float | None] = mapped_column(Float)
+    regime: Mapped[str | None] = mapped_column(String(24))
+    session: Mapped[str | None] = mapped_column(String(32))
+    error_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ModelPerformanceRecord(Base):
+    __tablename__ = "model_performance"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    model_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    model_version: Mapped[str | None] = mapped_column(String(64))
+    window: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    calculated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    samples: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reliable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    win_rate: Mapped[float | None] = mapped_column(Float)
+    expectancy: Mapped[float | None] = mapped_column(Float)
+    profit_factor: Mapped[float | None] = mapped_column(Float)
+    net_pnl: Mapped[float | None] = mapped_column(Float)
+    max_drawdown: Mapped[float | None] = mapped_column(Float)
+    average_mae: Mapped[float | None] = mapped_column(Float)
+    average_mfe: Mapped[float | None] = mapped_column(Float)
+    prediction_accuracy: Mapped[float | None] = mapped_column(Float)
+    brier_score: Mapped[float | None] = mapped_column(Float)
+    evidence: Mapped[str] = mapped_column(String(32), nullable=False, default="FORWARD_OBSERVATION")
+    metrics_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class EdgeEvaluationRecord(Base):
+    __tablename__ = "edge_evaluations"
+    evaluation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    model_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    symbol: Mapped[str | None] = mapped_column(String(32), index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    verdict: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    samples: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expectancy: Mapped[float | None] = mapped_column(Float)
+    win_rate: Mapped[float | None] = mapped_column(Float)
+    profit_factor: Mapped[float | None] = mapped_column(Float)
+    net_pnl: Mapped[float | None] = mapped_column(Float)
+    max_drawdown: Mapped[float | None] = mapped_column(Float)
+    beats_baselines: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reasons: Mapped[str | None] = mapped_column(Text)
+    # Section 24: an edge may only be claimed from forward evidence.
+    evidence: Mapped[str] = mapped_column(String(32), nullable=False, default="FORWARD_OBSERVATION")
+    report_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class TrainingRunRecord(Base):
+    __tablename__ = "training_runs"
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    model_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dataset_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    trigger: Mapped[str | None] = mapped_column(String(32))
+    requested_by: Mapped[str | None] = mapped_column(String(128))
+    ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    failed_step: Mapped[str | None] = mapped_column(String(24))
+    state: Mapped[str | None] = mapped_column(String(16))
+    edge_verdict: Mapped[str | None] = mapped_column(String(24))
+    registered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Constant false: a training run never promotes. Promotion is a separate,
+    # human-approved action.
+    promoted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    run_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+# ------------------------------------------------ Phase 15 AI research lab
+# Declarations and measurements. A strategy row is a description of rules, not
+# an executable object, and an experiment row is a recorded comparison.
+
+
+class ResearchStrategyRecord(Base):
+    __tablename__ = "research_strategies"
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    strategy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    # Content hash of the rule declaration: two identical strategies collide.
+    fingerprint: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    features: Mapped[str | None] = mapped_column(Text)
+    timeframes: Mapped[str | None] = mapped_column(String(255))
+    approved_by: Mapped[str | None] = mapped_column(String(128))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    record_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ResearchExperimentRecord(Base):
+    __tablename__ = "research_experiments"
+    experiment_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    strategy_key: Mapped[str | None] = mapped_column(String(128), index=True)
+    strategy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    feature_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_version: Mapped[str | None] = mapped_column(String(64))
+    dataset_version: Mapped[str | None] = mapped_column(String(128), index=True)
+    label_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expectancy: Mapped[float | None] = mapped_column(Float)
+    win_rate: Mapped[float | None] = mapped_column(Float)
+    net_pnl: Mapped[float | None] = mapped_column(Float)
+    profit_factor: Mapped[float | None] = mapped_column(Float)
+    maximum_drawdown: Mapped[float | None] = mapped_column(Float)
+    sharpe_like: Mapped[float | None] = mapped_column(Float)
+    reliable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Section 6: research reads forward evidence and records which kind it used.
+    evidence: Mapped[str] = mapped_column(String(32), nullable=False, default="FORWARD_OBSERVATION")
+    # Section 17: whether this result touched the reserved holdout.
+    used_holdout: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    spec_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    metrics_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ResearchFindingRecord(Base):
+    __tablename__ = "research_findings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    study: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    subject: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    verdict: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    effect_size: Mapped[float | None] = mapped_column(Float)
+    significant: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    experiment_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    reasons: Mapped[str | None] = mapped_column(Text)
+    finding_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+# ------------------------------------------- Phase 16 controlled DEMO trading
+# Execution proposals, the DEMO trade journal, the trading-day risk budget,
+# position monitoring, paper-vs-DEMO comparisons and emergency events.
+# As everywhere else in this schema, no table here has a credential column.
+
+
+class DemoExecutionProposalRecord(Base):
+    __tablename__ = "demo_execution_proposals"
+    proposal_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    side: Mapped[str] = mapped_column(String(8), nullable=False)
+    volume: Mapped[float] = mapped_column(Float, nullable=False)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    approved_by: Mapped[str | None] = mapped_column(String(128))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approval_reason: Mapped[str | None] = mapped_column(String(255))
+    rejected_reason: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    blocked_by: Mapped[str | None] = mapped_column(Text)
+    proposal_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class DemoTradeJournalRecord(Base):
+    __tablename__ = "demo_trade_journal"
+    trade_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    direction: Mapped[str] = mapped_column(String(8), nullable=False)
+    broker_ticket: Mapped[int | None] = mapped_column(BigInteger)
+    exit_reason: Mapped[str | None] = mapped_column(String(48), index=True)
+    pnl: Mapped[float | None] = mapped_column(Float)
+    gross_pnl: Mapped[float | None] = mapped_column(Float)
+    mae: Mapped[float | None] = mapped_column(Float)
+    mfe: Mapped[float | None] = mapped_column(Float)
+    commission: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    swap: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    slippage: Mapped[float | None] = mapped_column(Float)
+    session: Mapped[str | None] = mapped_column(String(32))
+    regime: Mapped[str | None] = mapped_column(String(32))
+    model_version: Mapped[str | None] = mapped_column(String(64))
+    strategy_version: Mapped[str | None] = mapped_column(String(64))
+    feature_version: Mapped[str | None] = mapped_column(String(64))
+    closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    journal_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class DemoDailyRiskRecord(Base):
+    __tablename__ = "demo_daily_risk"
+    __table_args__ = (UniqueConstraint("trading_day", "timezone", name="uq_demo_daily_risk_day"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trading_day: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    starting_equity: Mapped[float] = mapped_column(Float, nullable=False)
+    equity: Mapped[float] = mapped_column(Float, nullable=False)
+    peak_equity: Mapped[float] = mapped_column(Float, nullable=False)
+    daily_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    daily_drawdown: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_drawdown: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    trade_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    blocked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reasons: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    state_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class DemoPositionSnapshotRecord(Base):
+    __tablename__ = "demo_position_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticket: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    direction: Mapped[str] = mapped_column(String(8), nullable=False)
+    volume: Mapped[float] = mapped_column(Float, nullable=False)
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False)
+    current_price: Mapped[float] = mapped_column(Float, nullable=False)
+    unrealized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    mae: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    mfe: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    duration_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    dca_levels: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class DemoPaperComparisonRecord(Base):
+    __tablename__ = "demo_paper_comparisons"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    paper_entry: Mapped[float | None] = mapped_column(Float)
+    demo_entry: Mapped[float | None] = mapped_column(Float)
+    paper_exit: Mapped[float | None] = mapped_column(Float)
+    demo_exit: Mapped[float | None] = mapped_column(Float)
+    entry_difference: Mapped[float | None] = mapped_column(Float)
+    exit_difference: Mapped[float | None] = mapped_column(Float)
+    spread: Mapped[float | None] = mapped_column(Float)
+    slippage: Mapped[float | None] = mapped_column(Float)
+    commission: Mapped[float | None] = mapped_column(Float)
+    swap: Mapped[float | None] = mapped_column(Float)
+    pnl_difference: Mapped[float | None] = mapped_column(Float)
+    within_tolerance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    errors: Mapped[str | None] = mapped_column(Text)
+    comparison_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class DemoEmergencyEventRecord(Base):
+    __tablename__ = "demo_emergency_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    triggers: Mapped[str] = mapped_column(Text, nullable=False)
+    action: Mapped[str | None] = mapped_column(String(48))
+    shutdown: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Always False: an emergency engages the kill switch, it never liquidates.
+    positions_closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    event_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+# ----------------------------------------- Phase 17 shadow trading & validation
+# Shadow rows are counterfactuals, never fills: `orders_sent` is a column that is
+# always 0, so the invariant is visible in the data and not only in prose.
+
+
+class ShadowSignalRecord(Base):
+    __tablename__ = "shadow_signals"
+    shadow_signal_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    demo_execution_request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    side: Mapped[str] = mapped_column(String(8), nullable=False)
+    entry: Mapped[float | None] = mapped_column(Float)
+    stop_loss: Mapped[float | None] = mapped_column(Float)
+    take_profit: Mapped[float | None] = mapped_column(Float)
+    volume: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    strategy: Mapped[str | None] = mapped_column(String(64))
+    strategy_version: Mapped[str | None] = mapped_column(String(64))
+    model_version: Mapped[str | None] = mapped_column(String(64))
+    feature_version: Mapped[str | None] = mapped_column(String(64))
+    confidence: Mapped[float | None] = mapped_column(Float)
+    risk_snapshot_id: Mapped[str | None] = mapped_column(String(64))
+    risk_state: Mapped[str | None] = mapped_column(String(16))
+    session: Mapped[str | None] = mapped_column(String(32), index=True)
+    regime: Mapped[str | None] = mapped_column(String(32), index=True)
+    timeframe: Mapped[str | None] = mapped_column(String(8))
+    signal_timeframe: Mapped[str | None] = mapped_column(String(8))
+    spread: Mapped[float | None] = mapped_column(Float)
+    approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Would the trade have been taken had execution been armed?
+    decision_approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False,
+                                                    index=True)
+    executed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    not_executed_reason: Mapped[str | None] = mapped_column(String(64))
+    blocked_reasons: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="OPEN", index=True)
+    # Always 0. A shadow signal has no transport to send anything with.
+    orders_sent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    signal_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ShadowOutcomeRecord(Base):
+    __tablename__ = "shadow_outcomes"
+    shadow_signal_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    side: Mapped[str] = mapped_column(String(8), nullable=False)
+    resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    expected_entry: Mapped[float] = mapped_column(Float, nullable=False)
+    expected_exit: Mapped[float] = mapped_column(Float, nullable=False)
+    expected_pnl: Mapped[float] = mapped_column(Float, nullable=False)
+    mfe: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    mae: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    duration_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    spread: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    slippage_estimate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    commission_estimate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    net_expected_pnl: Mapped[float] = mapped_column(Float, nullable=False)
+    exit_reason: Mapped[str | None] = mapped_column(String(48))
+    executed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    session: Mapped[str | None] = mapped_column(String(32), index=True)
+    regime: Mapped[str | None] = mapped_column(String(32), index=True)
+    outcome_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ShadowDemoComparisonRecord(Base):
+    __tablename__ = "demo_comparisons"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    shadow_signal_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    demo_execution_request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    signal_difference: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    entry_difference: Mapped[float | None] = mapped_column(Float)
+    exit_difference: Mapped[float | None] = mapped_column(Float)
+    slippage_difference: Mapped[float | None] = mapped_column(Float)
+    cost_difference: Mapped[float | None] = mapped_column(Float)
+    pnl_difference: Mapped[float | None] = mapped_column(Float)
+    mae_difference: Mapped[float | None] = mapped_column(Float)
+    mfe_difference: Mapped[float | None] = mapped_column(Float)
+    time_difference: Mapped[float | None] = mapped_column(Float)
+    primary_kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    kinds: Mapped[str | None] = mapped_column(Text)
+    matched: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    shadow_net_pnl: Mapped[float | None] = mapped_column(Float)
+    demo_net_pnl: Mapped[float | None] = mapped_column(Float)
+    comparison_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ExecutionQualityRecord(Base):
+    __tablename__ = "execution_quality"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    window: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    submitted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    filled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rejected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    errored: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fill_rate: Mapped[float | None] = mapped_column(Float)
+    rejection_rate: Mapped[float | None] = mapped_column(Float)
+    average_slippage: Mapped[float | None] = mapped_column(Float)
+    worst_slippage: Mapped[float | None] = mapped_column(Float)
+    reconciliation_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    connection_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reliable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    quality_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class ValidationRunRecord(Base):
+    __tablename__ = "validation_runs"
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    window: Mapped[str | None] = mapped_column(String(16))
+    samples: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    edge_status: Mapped[str] = mapped_column(String(24), nullable=False, default="INSUFFICIENT_DATA")
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reasons: Mapped[str | None] = mapped_column(Text)
+    report_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class PerformanceGateRecord(Base):
+    __tablename__ = "performance_gates"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    gate: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    observed: Mapped[float | None] = mapped_column(Float)
+    threshold: Mapped[float | None] = mapped_column(Float)
+    detail: Mapped[str | None] = mapped_column(Text)
+    # Always False. A passing gate is evidence, never an action.
+    enabled_execution: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    gate_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class CircuitBreakerEventRecord(Base):
+    __tablename__ = "circuit_breaker_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    triggers: Mapped[str | None] = mapped_column(Text)
+    reasons: Mapped[str | None] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False, default="system")
+    # Always False: tripping the breaker blocks new orders, it never liquidates.
+    positions_closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    health_check: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    risk_check: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    account_validation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    human_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    event_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
 __all__ = [
     "MarketCandle", "MarketDataIngestion", "MarketTick", "TradingViewAlert", "LiquidityEvent",
     "StructureEvent", "IndicatorSnapshot", "MarketIntelligenceSnapshot", "COTReport", "InstitutionalPressure",
@@ -664,4 +1325,16 @@ __all__ = [
     "MT5ConnectionEventRecord", "MT5DataQualityEventRecord",
     "ExecutionRequestRecord", "ExecutionResultRecord", "ExecutionAuditLogRecord",
     "ReconciliationRecordRow", "KillSwitchEventRecord",
+    "ObservationMarketSnapshotRecord", "FeatureSnapshotRecord", "ExecutionSimulationRecord",
+    "SystemHealthRecord", "MT5HealthEventRecord", "ObservationPerformanceRecord",
+    "DatasetAuditRecord", "ModelRegistryRecord", "ModelDriftEventRecord",
+    "ObservationRecord", "ObservationOutcomeRecord", "ModelErrorRecord",
+    "ResearchStrategyRecord", "ResearchExperimentRecord", "ResearchFindingRecord",
+    "ModelPerformanceRecord", "EdgeEvaluationRecord", "TrainingRunRecord",
+    "RetrainingRequestRecord",
+    "DemoExecutionProposalRecord", "DemoTradeJournalRecord", "DemoDailyRiskRecord",
+    "DemoPositionSnapshotRecord", "DemoPaperComparisonRecord", "DemoEmergencyEventRecord",
+    "ShadowSignalRecord", "ShadowOutcomeRecord", "ShadowDemoComparisonRecord",
+    "ExecutionQualityRecord", "ValidationRunRecord", "PerformanceGateRecord",
+    "CircuitBreakerEventRecord",
 ]

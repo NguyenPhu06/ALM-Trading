@@ -15,3 +15,22 @@ Ngưỡng phân loại được cấu hình tại `phase_4.classification_thresh
 Outcome threshold được cấu hình độc lập. Kết quả long và short là `FAVORABLE`, `ADVERSE`, `MIXED` hoặc `NEUTRAL`, tùy việc excursion thuận lợi/bất lợi có vượt ngưỡng hay không. Giữ `MIXED` vì candle OHLC không thể chứng minh biên intrabar nào xảy ra trước.
 
 Các target này dành cho supervised learning và nghiên cứu strategy. Chúng không phải signal, tuyên bố lợi nhuận hay quyền thực thi lệnh.
+
+## Phase 13 — gán nhãn forward-only, có tính chi phí
+
+`ai/dataset/labels.py` (`LABEL_VERSION = "labels_v1"`) gán nhãn cho observation thật thay vì candle lịch sử, nên quy tắc quan trọng nhất là **thời gian**.
+
+`LabelingEngine` từ chối gán nhãn khi:
+
+- `now < entry_time + horizon` — horizon chưa trôi qua, tương lai chưa tồn tại;
+- cửa sổ dữ liệu không chạm tới deadline — không đủ dữ liệu để kết luận.
+
+Lý do từ chối là enum `LabelRefusal`, được đếm trong `DatasetAudit`. Từ chối là hành vi đúng; không có nhánh nào ngoại suy hay điền tạm.
+
+Horizon (`HORIZONS`) trải từ 5 phút tới 24 giờ, cấu hình ở `phase_13.horizons`.
+
+Nhãn có tính **chi phí giao dịch** (`TradingCosts`: spread, commission, swap ước tính). Một chuyển động nhỏ hơn chi phí không phải cơ hội, nên nó là `NEUTRAL` chứ không phải `UP` hay `DOWN`. Việc này ép model học các cơ hội thực sự trả tiền được, không phải nhiễu.
+
+`ForwardLabel` ghi kèm horizon, label version và timestamp gán nhãn để có thể truy vết.
+
+Xem thêm: [dataset_pipeline.md](dataset_pipeline.md), [lookahead_protection.md](lookahead_protection.md).

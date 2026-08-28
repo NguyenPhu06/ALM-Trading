@@ -135,3 +135,67 @@ def test_reconciliation_reports_but_never_repairs(db_session):
         fill_volume=0.09, server=DEMO_SERVER))
     service.execute(order(volume=0.01))
     assert len(fake.sent) == 1, "no corrective order may be sent"
+
+
+# ------------------------------------ Phase 16: reconciliation as a safe shutdown
+# Section 15 says a mismatch raises RECONCILIATION_FAILURE and alerts; section 17
+# adds that it is one of the automatic shutdown conditions. Both are checked here.
+from execution.demo.emergency import EmergencyTrigger
+from tests import phase16_helpers as p16
+
+
+def test_a_matched_fill_reconciles_and_leaves_execution_armed(db_session):
+    service, _ = p16.service_for(db_session)
+    request = p16.order()
+    outcome = service.submit(request, p16.live_context(service, request))
+    assert outcome.reconciliation.matched
+    assert not service.kill_switch.engaged
+
+
+def test_a_volume_mismatch_is_a_reconciliation_failure(db_session):
+    from execution.mt5.mock import FakeExecutionModule
+
+    service, _ = p16.service_for(db_session, module=FakeExecutionModule(
+        fill_volume=0.01, retcode=10010, server=p16.DEMO_SERVER))
+    request = p16.order(volume=0.02)
+    outcome = service.submit(request, p16.live_context(service, request))
+    assert not outcome.reconciliation.matched
+
+
+def test_a_reconciliation_failure_shuts_execution_down(db_session):
+    from execution.mt5.mock import FakeExecutionModule
+
+    service, fake = p16.service_for(db_session, module=FakeExecutionModule(
+        fill_volume=0.01, retcode=10010, server=p16.DEMO_SERVER))
+    request = p16.order(volume=0.02)
+    service.submit(request, p16.live_context(service, request))
+
+    assert service.kill_switch.engaged, "section 17: a mismatch is a safe shutdown"
+    assert len(fake.sent) == 1, "no corrective order may be sent"
+
+
+def test_the_shutdown_records_the_reconciliation_trigger(db_session):
+    from database.models import DemoEmergencyEventRecord
+    from execution.mt5.mock import FakeExecutionModule
+
+    service, _ = p16.service_for(db_session, module=FakeExecutionModule(
+        fill_volume=0.01, retcode=10010, server=p16.DEMO_SERVER))
+    request = p16.order(volume=0.02)
+    service.submit(request, p16.live_context(service, request))
+
+    rows = db_session.query(DemoEmergencyEventRecord).all()
+    assert rows and str(EmergencyTrigger.RECONCILIATION_FAILURE) in rows[0].triggers
+    assert rows[0].positions_closed is False
+
+
+def test_a_reconciliation_failure_raises_the_phase_16_alert(db_session):
+    from database.models import DashboardAlertRecord
+    from execution.mt5.mock import FakeExecutionModule
+
+    service, _ = p16.service_for(db_session, module=FakeExecutionModule(
+        fill_volume=0.01, retcode=10010, server=p16.DEMO_SERVER))
+    request = p16.order(volume=0.02)
+    service.submit(request, p16.live_context(service, request))
+
+    types = {row.alert_type for row in db_session.query(DashboardAlertRecord).all()}
+    assert {"RECONCILIATION_FAILURE", "EMERGENCY_SHUTDOWN"} <= types

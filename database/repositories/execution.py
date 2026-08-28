@@ -116,6 +116,26 @@ class ExecutionRepository:
         return (self.session.query(ExecutionResultRecord)
                 .order_by(desc(ExecutionResultRecord.timestamp)).first())
 
+    def request_exists(self, request_id: str) -> ExecutionRequestRecord | None:
+        return self.session.get(ExecutionRequestRecord, str(request_id))
+
+    def execution_exists(self, request_id: str) -> ExecutionResultRecord | None:
+        """Phase 16 idempotency: did this request id ever reach the broker?
+
+        Deliberately NOT "was a request with this id ever recorded". A proposal
+        the gates refused never reached anything, so re-proposing the same signal
+        after the gate is fixed is a first submission, not a duplicate. Only a
+        result that was not BLOCKED counts.
+
+        Returning the row rather than a bool lets the caller report when the
+        original submission happened, which makes a duplicate refusal actionable
+        instead of merely blunt.
+        """
+        return (self.session.query(ExecutionResultRecord)
+                .filter(ExecutionResultRecord.request_id == str(request_id),
+                        ExecutionResultRecord.status != "BLOCKED")
+                .order_by(ExecutionResultRecord.id).first())
+
     def results_for(self, request_id: str) -> list[ExecutionResultRecord]:
         return (self.session.query(ExecutionResultRecord)
                 .filter(ExecutionResultRecord.request_id == request_id)

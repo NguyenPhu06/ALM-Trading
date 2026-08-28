@@ -35,3 +35,10 @@ def client(db_session: Session) -> TestClient:
         yield test_client
     app.dependency_overrides.clear()
 
+
+@pytest.fixture
+def memory_repository():
+    """In-memory stand-in for ForwardObservationRepository (Phase 14)."""
+    from tests.phase14_helpers import MemoryRepository
+
+    return MemoryRepository()
